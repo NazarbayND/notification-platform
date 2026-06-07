@@ -1,0 +1,36 @@
+package com.notificationplatform.domain.repository;
+
+import com.notificationplatform.domain.entity.NotificationDelivery;
+import com.notificationplatform.domain.model.DeliveryStatus;
+import java.time.Instant;
+import java.util.Collection;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+
+public interface NotificationDeliveryRepository extends JpaRepository<NotificationDelivery, UUID> {
+
+    List<NotificationDelivery> findByNotificationRequest_IdOrderByCreatedAtAsc(UUID notificationRequestId);
+
+    Optional<NotificationDelivery> findByProviderAndProviderMessageId(String provider, String providerMessageId);
+
+    @Query("""
+        select delivery
+        from NotificationDelivery delivery
+        where delivery.status in :statuses
+          and (delivery.nextAttemptAt is null or delivery.nextAttemptAt <= :now)
+        order by
+          case when delivery.nextAttemptAt is null then 0 else 1 end,
+          delivery.nextAttemptAt asc,
+          delivery.createdAt asc
+        """)
+    List<NotificationDelivery> findReadyForAttempt(
+        @Param("statuses") Collection<DeliveryStatus> statuses,
+        @Param("now") Instant now,
+        Pageable pageable
+    );
+}
