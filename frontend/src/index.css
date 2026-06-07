@@ -1,0 +1,19 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-mist text-ink antialiased;
+  }
+
+  input,
+  select,
+  textarea {
+    @apply rounded-md border border-line bg-white px-3 py-2 text-sm shadow-sm outline-none transition focus:border-fern focus:ring-2 focus:ring-fern/20;
+  }
+
+  textarea {
+    @apply min-h-32 font-mono;
+  }
+}
