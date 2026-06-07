@@ -16,12 +16,13 @@ Implemented:
 - Service layer for notification and batch submission
 - Service layer for delivery retry/DLQ state transitions
 - Service layer for outbox polling and publish status updates
+- REST controllers for the MVP API surface
+- Request/response DTOs and global API error handling
 - Focused unit tests for service logic
+- Focused MVC tests for representative controller behavior
 
 Not implemented yet:
 
-- REST controllers
-- Request/response DTOs
 - Provider adapters
 - Queue implementation
 - Worker processes
@@ -136,7 +137,7 @@ Recommended next small steps:
 1. Add Docker Compose for PostgreSQL.
 2. Run Flyway against a local database and fix any validation issues.
 3. Add integration tests for repositories and migrations.
-4. Add request/response DTOs.
-5. Add controllers for Management API and Notification API.
-6. Add mock email provider adapter and email worker.
-7. Add outbox publisher loop.
+4. Add mock email provider adapter and email worker.
+5. Add outbox publisher loop.
+6. Add queue configuration.
+7. Add API integration tests.
