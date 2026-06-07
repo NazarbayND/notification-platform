@@ -1,0 +1,13 @@
+spring:
+  application:
+    name: notification-platform
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/notification_platform}
+    username: ${DATABASE_USERNAME:notification}
+    password: ${DATABASE_PASSWORD:notification}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
