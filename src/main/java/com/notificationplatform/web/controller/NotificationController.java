@@ -36,13 +36,14 @@ public class NotificationController {
         return NotificationResponse.from(notificationSubmissionService.createNotification(new CreateNotificationCommand(
             request.productId(),
             request.templateKey(),
-            request.channel(),
+            request.requestedChannels(),
             request.externalUserId(),
             request.idempotencyKey(),
             request.category(),
             request.priority(),
             request.payload(),
-            request.recipient()
+            request.recipient(),
+            request.expiresAt()
         )));
     }
 
@@ -68,13 +69,14 @@ public class NotificationController {
     private static BatchNotificationItem toBatchItem(BatchNotificationItemRequest request) {
         return new BatchNotificationItem(
             request.templateKey(),
-            request.channel(),
+            request.requestedChannels(),
             request.externalUserId(),
             request.idempotencyKey(),
             request.category(),
             request.priority(),
             request.payload(),
-            request.recipient()
+            request.recipient(),
+            request.expiresAt()
         );
     }
 }

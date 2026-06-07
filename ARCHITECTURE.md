@@ -32,6 +32,62 @@ Channel workers consume messages and send through provider adapters.
 - Workers must be idempotent.
 - Failed deliveries must retry with exponential backoff.
 - After max retries, delivery goes to DLQ.
+- Expired notification requests and deliveries must not be sent.
+
+## Status enums
+
+Status values are stored as strings in PostgreSQL and mapped with Java enums.
+
+### ProductStatus
+
+- `ACTIVE`
+- `DISABLED`
+
+### TemplateStatus
+
+- `DRAFT`
+- `ACTIVE`
+- `ARCHIVED`
+
+### BatchStatus
+
+- `ACCEPTED`
+- `PROCESSING`
+- `COMPLETED`
+- `PARTIAL_FAILED`
+- `FAILED`
+
+### NotificationRequestStatus
+
+- `ACCEPTED` - request was accepted and persisted
+- `DELIVERY_CREATED` - one or more delivery rows were created
+- `COMPLETED` - all non-skipped deliveries reached a terminal success state
+- `PARTIAL_FAILED` - request has multiple deliveries and at least one failed terminally
+- `FAILED` - request failed terminally
+- `SKIPPED` - request produced no sendable deliveries, usually because preferences disabled all requested channels or the request expired
+
+### DeliveryStatus
+
+- `PENDING` - delivery is ready for worker pickup
+- `PROCESSING` - worker has locked the delivery for an attempt
+- `SENT` - provider accepted the message
+- `DELIVERED` - provider confirmed final delivery
+- `FAILED` - non-retryable failure
+- `RETRY_SCHEDULED` - retry is scheduled through `next_attempt_at`
+- `DLQ` - max attempts exhausted
+- `SKIPPED` - delivery was intentionally not sent
+
+### DeliveryAttemptStatus
+
+- `STARTED`
+- `SUCCEEDED`
+- `FAILED`
+
+### OutboxEventStatus
+
+- `PENDING`
+- `PUBLISHED`
+- `FAILED`
 
 ## MVP data model
 
@@ -100,11 +156,13 @@ Idempotency key is unique per product.
 ### Notification Requests
 
 `notification_requests` represents the original request accepted by the Notification API. Request status is orchestration-level state, not provider delivery state.
+It stores the requested template key and channel intent. Concrete template versions are resolved per delivery.
 
 - `id`
 - `product_id`
 - `batch_id`
-- `template_id`
+- `template_key`
+- `requested_channels`
 - `external_user_id`
 - `idempotency_key`
 - `category`
@@ -112,6 +170,7 @@ Idempotency key is unique per product.
 - `payload`
 - `recipient`
 - `status`
+- `expires_at`
 - `created_at`
 - `updated_at`
 
@@ -120,9 +179,11 @@ Idempotency key is unique per product.
 ### Notification Deliveries
 
 `notification_deliveries` represents one channel delivery created from a notification request. Delivery status, retry state, provider response data, and DLQ state live here.
+Each delivery stores the concrete `template_id` resolved for its channel, so future template changes do not affect already-created deliveries.
 
 - `id`
 - `notification_request_id`
+- `template_id`
 - `channel`
 - `provider`
 - `destination`
@@ -138,10 +199,31 @@ Idempotency key is unique per product.
 - `sent_at`
 - `delivered_at`
 - `failed_at`
+- `expires_at`
 - `created_at`
 - `updated_at`
 
 The MVP allows one delivery per `(notification_request_id, channel)`.
+
+### Delivery Attempts
+
+`delivery_attempts` records each worker/provider attempt for a delivery. The delivery row stores current state; attempt rows store history.
+
+- `id`
+- `notification_delivery_id`
+- `attempt_number`
+- `status`
+- `provider`
+- `provider_message_id`
+- `error_code`
+- `error_message`
+- `request_payload`
+- `response_payload`
+- `started_at`
+- `completed_at`
+- `created_at`
+
+Attempt number is unique per delivery.
 
 ### Outbox Events
 
@@ -212,17 +294,21 @@ Indexes are chosen around the MVP write and read paths: product-scoped idempoten
 
   Supports loading deliveries for a notification request and calculating request-level status from delivery-level state.
 
-- `notification_deliveries(status, next_attempt_at)`
+- `notification_deliveries(next_attempt_at, expires_at, created_at)` partial where status is `PENDING` or `RETRY_SCHEDULED`
 
-  Supports worker polling for pending and retryable deliveries. Workers can efficiently find rows whose status is ready and whose next attempt time has arrived.
+  Supports worker polling for pending and retryable, non-expired deliveries. The partial index stays smaller by indexing only rows workers can pick up.
 
 - `notification_deliveries(provider, provider_message_id)`
 
   Supports provider callback or webhook correlation when a provider returns an external message id.
 
-- `outbox_events(status, available_at, created_at)`
+- `delivery_attempts(notification_delivery_id, attempt_number)` unique
 
-  Supports the Outbox Publisher polling pending events in deterministic order, including delayed retry through `available_at`.
+  Prevents duplicate attempt numbers for the same delivery and supports attempt history views.
+
+- `outbox_events(available_at, created_at)` partial where status is `PENDING`
+
+  Supports the Outbox Publisher polling pending events in deterministic order, including delayed retry through `available_at`. The partial index avoids indexing published event history.
 
 - `outbox_events(aggregate_type, aggregate_id)`
 

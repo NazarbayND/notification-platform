@@ -3,8 +3,11 @@ package com.notificationplatform.web.dto;
 import com.notificationplatform.domain.model.Channel;
 import com.notificationplatform.domain.model.NotificationPriority;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
+import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -16,8 +19,8 @@ public record SendNotificationRequest(
     @Size(max = 120)
     String templateKey,
 
-    @NotNull
-    Channel channel,
+    @NotEmpty
+    List<Channel> requestedChannels,
 
     @NotBlank
     @Size(max = 160)
@@ -36,6 +39,8 @@ public record SendNotificationRequest(
     Map<String, Object> payload,
 
     @NotNull
-    Map<String, Object> recipient
+    Map<String, Object> recipient,
+
+    Instant expiresAt
 ) {
 }

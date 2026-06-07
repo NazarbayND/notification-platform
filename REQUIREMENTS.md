@@ -13,6 +13,10 @@
 - Retry failed delivery
 - DLQ after max retries
 - Store outbox events in the same transaction as notification state changes
+- Store requested channels on notification requests.
+- Store resolved template version on each notification delivery.
+- Store delivery attempt history.
+- Support request and delivery expiration through `expires_at`.
 
 ## Data rules
 
@@ -20,6 +24,7 @@
 - The platform stores product-scoped `external_user_id`; it does not own full end-user profiles in the MVP.
 - User preferences are scoped by product, external user id, category, and channel.
 - Notification request status is separate from notification delivery status.
+- Notification requests store `template_key`; deliveries store the resolved `template_id`.
 - Provider-specific data belongs on delivery records or provider adapters, not on request records.
 - Redis is optional and only for cache, rate-limit, or idempotency optimization.
 

@@ -23,6 +23,7 @@ public interface NotificationDeliveryRepository extends JpaRepository<Notificati
         from NotificationDelivery delivery
         where delivery.status in :statuses
           and (delivery.nextAttemptAt is null or delivery.nextAttemptAt <= :now)
+          and (delivery.expiresAt is null or delivery.expiresAt > :now)
         order by
           case when delivery.nextAttemptAt is null then 0 else 1 end,
           delivery.nextAttemptAt asc,

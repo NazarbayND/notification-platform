@@ -20,11 +20,15 @@ import com.notificationplatform.domain.repository.NotificationRequestRepository;
 import com.notificationplatform.domain.repository.NotificationTemplateRepository;
 import com.notificationplatform.domain.repository.OutboxEventRepository;
 import com.notificationplatform.domain.repository.ProductRepository;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -66,7 +70,7 @@ public class NotificationSubmissionService {
     public NotificationRequest createNotification(CreateNotificationCommand command) {
         Objects.requireNonNull(command, "Create notification command is required");
         Objects.requireNonNull(command.productId(), "Product id is required");
-        Objects.requireNonNull(command.channel(), "Notification channel is required");
+        normalizeRequestedChannels(command.requestedChannels());
         String idempotencyKey = normalizeRequired(command.idempotencyKey(), "Idempotency key is required");
 
         return requestRepository.findByProduct_IdAndIdempotencyKey(command.productId(), idempotencyKey)
@@ -159,7 +163,7 @@ public class NotificationSubmissionService {
 
     private NotificationRequest createNotification(CreateNotificationCommand command, NotificationBatch batch) {
         Objects.requireNonNull(command.productId(), "Product id is required");
-        Channel channel = Objects.requireNonNull(command.channel(), "Notification channel is required");
+        List<Channel> requestedChannels = normalizeRequestedChannels(command.requestedChannels());
         String templateKey = normalizeRequired(command.templateKey(), "Template key is required");
         String externalUserId = normalizeRequired(command.externalUserId(), "External user id is required");
         String idempotencyKey = normalizeRequired(command.idempotencyKey(), "Idempotency key is required");
@@ -175,48 +179,77 @@ public class NotificationSubmissionService {
 
         Product product = productRepository.findById(command.productId())
             .orElseThrow(() -> new ResourceNotFoundException("Product not found: " + command.productId()));
-        NotificationTemplate template = templateRepository.findByProduct_IdAndTemplateKeyAndChannelAndStatus(
-            command.productId(),
-            templateKey,
-            channel,
-            TemplateStatus.ACTIVE
-        ).orElseThrow(() -> new ResourceNotFoundException("Active template not found"));
 
-        NotificationRequest request = new NotificationRequest(product, template, externalUserId, idempotencyKey, category);
+        NotificationRequest request = new NotificationRequest(product, templateKey, externalUserId, idempotencyKey, category);
         request.setBatch(batch);
+        request.setRequestedChannels(requestedChannels);
         request.setPriority(command.priority() == null ? NotificationPriority.NORMAL : command.priority());
         request.setPayload(copyMap(command.payload()));
         request.setRecipient(copyMap(command.recipient()));
+        request.setExpiresAt(command.expiresAt());
 
-        boolean channelEnabled = userPreferenceService.isChannelEnabled(
-            command.productId(),
-            externalUserId,
-            category,
-            channel
-        );
-
-        if (!channelEnabled) {
+        if (isExpired(command.expiresAt())) {
             request.setStatus(NotificationRequestStatus.SKIPPED);
             NotificationRequest savedRequest = requestRepository.save(request);
             outboxEventRepository.save(new OutboxEvent(
                 AGGREGATE_NOTIFICATION_REQUEST,
                 savedRequest.getId(),
                 EVENT_NOTIFICATION_SKIPPED,
-                requestEventPayload(savedRequest, channel)
+                requestEventPayload(savedRequest)
             ));
             return savedRequest;
         }
 
-        String destination = resolveDestination(channel, request.getRecipient());
+        List<NotificationDelivery> deliveries = new ArrayList<>();
+        for (Channel channel : requestedChannels) {
+            boolean channelEnabled = userPreferenceService.isChannelEnabled(
+                command.productId(),
+                externalUserId,
+                category,
+                channel
+            );
+            if (!channelEnabled) {
+                continue;
+            }
+
+            NotificationTemplate template = templateRepository.findByProduct_IdAndTemplateKeyAndChannelAndStatus(
+                command.productId(),
+                templateKey,
+                channel,
+                TemplateStatus.ACTIVE
+            ).orElseThrow(() -> new ResourceNotFoundException("Active template not found for channel: " + channel));
+
+            String destination = resolveDestination(channel, request.getRecipient());
+            NotificationDelivery delivery = new NotificationDelivery(request, template, channel, destination);
+            delivery.setStatus(DeliveryStatus.PENDING);
+            delivery.setExpiresAt(command.expiresAt());
+            deliveries.add(delivery);
+        }
+
+        if (deliveries.isEmpty()) {
+            request.setStatus(NotificationRequestStatus.SKIPPED);
+            NotificationRequest savedRequest = requestRepository.save(request);
+            outboxEventRepository.save(new OutboxEvent(
+                AGGREGATE_NOTIFICATION_REQUEST,
+                savedRequest.getId(),
+                EVENT_NOTIFICATION_SKIPPED,
+                requestEventPayload(savedRequest)
+            ));
+            return savedRequest;
+        }
+
         request.setStatus(NotificationRequestStatus.DELIVERY_CREATED);
         NotificationRequest savedRequest = requestRepository.save(request);
 
-        NotificationDelivery delivery = new NotificationDelivery(savedRequest, channel, destination);
-        delivery.setStatus(DeliveryStatus.PENDING);
-        NotificationDelivery savedDelivery = deliveryRepository.save(delivery);
+        List<UUID> deliveryIds = new ArrayList<>();
+        for (NotificationDelivery delivery : deliveries) {
+            delivery.setNotificationRequest(savedRequest);
+            NotificationDelivery savedDelivery = deliveryRepository.save(delivery);
+            deliveryIds.add(savedDelivery.getId());
+        }
 
-        Map<String, Object> eventPayload = requestEventPayload(savedRequest, channel);
-        eventPayload.put("deliveryId", savedDelivery.getId());
+        Map<String, Object> eventPayload = requestEventPayload(savedRequest);
+        eventPayload.put("deliveryIds", deliveryIds);
         outboxEventRepository.save(new OutboxEvent(
             AGGREGATE_NOTIFICATION_REQUEST,
             savedRequest.getId(),
@@ -232,25 +265,28 @@ public class NotificationSubmissionService {
         return new CreateNotificationCommand(
             productId,
             item.templateKey(),
-            item.channel(),
+            item.requestedChannels(),
             item.externalUserId(),
             item.idempotencyKey(),
             item.category(),
             item.priority(),
             item.payload(),
-            item.recipient()
+            item.recipient(),
+            item.expiresAt()
         );
     }
 
-    private static Map<String, Object> requestEventPayload(NotificationRequest request, Channel channel) {
+    private static Map<String, Object> requestEventPayload(NotificationRequest request) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("notificationRequestId", request.getId());
         payload.put("productId", request.getProduct().getId());
         payload.put("externalUserId", request.getExternalUserId());
         payload.put("category", request.getCategory());
         payload.put("priority", request.getPriority());
-        payload.put("channel", channel);
+        payload.put("templateKey", request.getTemplateKey());
+        payload.put("requestedChannels", request.getRequestedChannels());
         payload.put("status", request.getStatus());
+        payload.put("expiresAt", request.getExpiresAt());
         return payload;
     }
 
@@ -259,6 +295,22 @@ public class NotificationSubmissionService {
             return new LinkedHashMap<>();
         }
         return new LinkedHashMap<>(value);
+    }
+
+    private static List<Channel> normalizeRequestedChannels(List<Channel> requestedChannels) {
+        if (requestedChannels == null || requestedChannels.isEmpty()) {
+            throw new IllegalArgumentException("At least one requested channel is required");
+        }
+
+        Set<Channel> uniqueChannels = new LinkedHashSet<>();
+        for (Channel channel : requestedChannels) {
+            uniqueChannels.add(Objects.requireNonNull(channel, "Requested channel is required"));
+        }
+        return List.copyOf(uniqueChannels);
+    }
+
+    private static boolean isExpired(Instant expiresAt) {
+        return expiresAt != null && !expiresAt.isAfter(Instant.now());
     }
 
     private static String resolveDestination(Channel channel, Map<String, Object> recipient) {

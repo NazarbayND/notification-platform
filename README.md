@@ -65,6 +65,7 @@ Core tables:
 - `notification_batches`
 - `notification_requests`
 - `notification_deliveries`
+- `delivery_attempts`
 - `outbox_events`
 
 Important data rules:
@@ -72,7 +73,10 @@ Important data rules:
 - The platform does not own full end-user profiles in the MVP.
 - Product teams own users; this platform stores product-scoped `external_user_id`.
 - Idempotency keys are unique per product.
+- Notification requests store template intent through `template_key` and `requested_channels`.
+- Notification deliveries store the resolved `template_id`.
 - Request status is separate from delivery status.
+- Delivery attempts are stored separately from current delivery state.
 - Provider-specific details belong on delivery records or provider adapters.
 - Redis is optional later for cache, rate limiting, or idempotency optimization only.
 

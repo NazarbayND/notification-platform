@@ -1,10 +1,13 @@
 package com.notificationplatform.application.delivery;
 
 import com.notificationplatform.application.common.ResourceNotFoundException;
+import com.notificationplatform.domain.entity.DeliveryAttempt;
 import com.notificationplatform.domain.entity.NotificationDelivery;
 import com.notificationplatform.domain.entity.NotificationRequest;
+import com.notificationplatform.domain.model.DeliveryAttemptStatus;
 import com.notificationplatform.domain.model.DeliveryStatus;
 import com.notificationplatform.domain.model.NotificationRequestStatus;
+import com.notificationplatform.domain.repository.DeliveryAttemptRepository;
 import com.notificationplatform.domain.repository.NotificationDeliveryRepository;
 import com.notificationplatform.domain.repository.NotificationRequestRepository;
 import java.time.Clock;
@@ -13,6 +16,7 @@ import java.time.Instant;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import org.springframework.data.domain.PageRequest;
@@ -25,22 +29,26 @@ public class NotificationDeliveryService {
     private static final int DEFAULT_POLL_LIMIT = 100;
 
     private final NotificationDeliveryRepository deliveryRepository;
+    private final DeliveryAttemptRepository deliveryAttemptRepository;
     private final NotificationRequestRepository requestRepository;
     private final Clock clock;
 
     public NotificationDeliveryService(
         NotificationDeliveryRepository deliveryRepository,
+        DeliveryAttemptRepository deliveryAttemptRepository,
         NotificationRequestRepository requestRepository
     ) {
-        this(deliveryRepository, requestRepository, Clock.systemUTC());
+        this(deliveryRepository, deliveryAttemptRepository, requestRepository, Clock.systemUTC());
     }
 
     NotificationDeliveryService(
         NotificationDeliveryRepository deliveryRepository,
+        DeliveryAttemptRepository deliveryAttemptRepository,
         NotificationRequestRepository requestRepository,
         Clock clock
     ) {
         this.deliveryRepository = deliveryRepository;
+        this.deliveryAttemptRepository = deliveryAttemptRepository;
         this.requestRepository = requestRepository;
         this.clock = clock;
     }
@@ -55,6 +63,12 @@ public class NotificationDeliveryService {
     public List<NotificationDelivery> listDeliveries(UUID notificationRequestId) {
         Objects.requireNonNull(notificationRequestId, "Notification request id is required");
         return deliveryRepository.findByNotificationRequest_IdOrderByCreatedAtAsc(notificationRequestId);
+    }
+
+    @Transactional(readOnly = true)
+    public List<DeliveryAttempt> listAttempts(UUID deliveryId) {
+        Objects.requireNonNull(deliveryId, "Delivery id is required");
+        return deliveryAttemptRepository.findByNotificationDelivery_IdOrderByAttemptNumberAsc(deliveryId);
     }
 
     @Transactional(readOnly = true)
@@ -73,10 +87,25 @@ public class NotificationDeliveryService {
         Duration effectiveLockDuration = lockDuration == null ? Duration.ofMinutes(5) : lockDuration;
 
         NotificationDelivery delivery = findDelivery(deliveryId);
+        if (isExpired(delivery)) {
+            delivery.setStatus(DeliveryStatus.SKIPPED);
+            delivery.setLockedUntil(null);
+            NotificationDelivery savedDelivery = deliveryRepository.save(delivery);
+            refreshRequestStatus(savedDelivery.getNotificationRequest());
+            return savedDelivery;
+        }
+
         delivery.setStatus(DeliveryStatus.PROCESSING);
         delivery.setAttemptCount(delivery.getAttemptCount() + 1);
         delivery.setLockedUntil(Instant.now(clock).plus(effectiveLockDuration));
-        return deliveryRepository.save(delivery);
+        NotificationDelivery savedDelivery = deliveryRepository.save(delivery);
+
+        DeliveryAttempt attempt = new DeliveryAttempt(savedDelivery, savedDelivery.getAttemptCount());
+        attempt.setStartedAt(Instant.now(clock));
+        attempt.setRequestPayload(attemptRequestPayload(savedDelivery));
+        deliveryAttemptRepository.save(attempt);
+
+        return savedDelivery;
     }
 
     @Transactional
@@ -95,6 +124,19 @@ public class NotificationDeliveryService {
         delivery.setLockedUntil(null);
 
         NotificationDelivery savedDelivery = deliveryRepository.save(delivery);
+        deliveryAttemptRepository.findByNotificationDelivery_IdAndAttemptNumber(
+            savedDelivery.getId(),
+            savedDelivery.getAttemptCount()
+        ).ifPresent(attempt -> {
+            attempt.setStatus(DeliveryAttemptStatus.SUCCEEDED);
+            attempt.setProvider(trimToNull(command.provider()));
+            attempt.setProviderMessageId(trimToNull(command.providerMessageId()));
+            attempt.setResponsePayload(command.providerResponse() == null
+                ? new LinkedHashMap<>()
+                : new LinkedHashMap<>(command.providerResponse()));
+            attempt.setCompletedAt(Instant.now(clock));
+            deliveryAttemptRepository.save(attempt);
+        });
         refreshRequestStatus(savedDelivery.getNotificationRequest());
         return savedDelivery;
     }
@@ -133,6 +175,16 @@ public class NotificationDeliveryService {
         }
 
         NotificationDelivery savedDelivery = deliveryRepository.save(delivery);
+        deliveryAttemptRepository.findByNotificationDelivery_IdAndAttemptNumber(
+            savedDelivery.getId(),
+            savedDelivery.getAttemptCount()
+        ).ifPresent(attempt -> {
+            attempt.setStatus(DeliveryAttemptStatus.FAILED);
+            attempt.setErrorCode(trimToNull(command.errorCode()));
+            attempt.setErrorMessage(trimToNull(command.errorMessage()));
+            attempt.setCompletedAt(Instant.now(clock));
+            deliveryAttemptRepository.save(attempt);
+        });
         refreshRequestStatus(savedDelivery.getNotificationRequest());
         return savedDelivery;
     }
@@ -172,6 +224,22 @@ public class NotificationDeliveryService {
     private static Duration backoffForAttempt(int attemptCount) {
         int exponent = Math.max(0, Math.min(attemptCount - 1, 6));
         return Duration.ofMinutes(1L << exponent);
+    }
+
+    private Map<String, Object> attemptRequestPayload(NotificationDelivery delivery) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("notificationRequestId", delivery.getNotificationRequest().getId());
+        payload.put("deliveryId", delivery.getId());
+        payload.put("templateId", delivery.getTemplate().getId());
+        payload.put("channel", delivery.getChannel());
+        payload.put("destination", delivery.getDestination());
+        payload.put("requestPayload", delivery.getNotificationRequest().getPayload());
+        return payload;
+    }
+
+    private boolean isExpired(NotificationDelivery delivery) {
+        Instant expiresAt = delivery.getExpiresAt();
+        return expiresAt != null && !expiresAt.isAfter(Instant.now(clock));
     }
 
     private static String trimToNull(String value) {

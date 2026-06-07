@@ -34,7 +34,7 @@ import org.hibernate.type.SqlTypes;
     },
     indexes = {
         @Index(name = "idx_notification_deliveries_request", columnList = "notification_request_id"),
-        @Index(name = "idx_notification_deliveries_status_next_attempt", columnList = "status,next_attempt_at")
+        @Index(name = "idx_notification_deliveries_ready_for_attempt", columnList = "next_attempt_at,expires_at,created_at")
     }
 )
 public class NotificationDelivery extends BaseEntity {
@@ -43,6 +43,11 @@ public class NotificationDelivery extends BaseEntity {
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "notification_request_id", nullable = false)
     private NotificationRequest notificationRequest;
+
+    @NotNull
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "template_id", nullable = false)
+    private NotificationTemplate template;
 
     @NotNull
     @Enumerated(EnumType.STRING)
@@ -101,11 +106,20 @@ public class NotificationDelivery extends BaseEntity {
     @Column(name = "failed_at")
     private Instant failedAt;
 
+    @Column(name = "expires_at")
+    private Instant expiresAt;
+
     protected NotificationDelivery() {
     }
 
-    public NotificationDelivery(NotificationRequest notificationRequest, Channel channel, String destination) {
+    public NotificationDelivery(
+        NotificationRequest notificationRequest,
+        NotificationTemplate template,
+        Channel channel,
+        String destination
+    ) {
         this.notificationRequest = notificationRequest;
+        this.template = template;
         this.channel = channel;
         this.destination = destination;
     }
@@ -116,6 +130,14 @@ public class NotificationDelivery extends BaseEntity {
 
     public void setNotificationRequest(NotificationRequest notificationRequest) {
         this.notificationRequest = notificationRequest;
+    }
+
+    public NotificationTemplate getTemplate() {
+        return template;
+    }
+
+    public void setTemplate(NotificationTemplate template) {
+        this.template = template;
     }
 
     public Channel getChannel() {
@@ -236,5 +258,13 @@ public class NotificationDelivery extends BaseEntity {
 
     public void setFailedAt(Instant failedAt) {
         this.failedAt = failedAt;
+    }
+
+    public Instant getExpiresAt() {
+        return expiresAt;
+    }
+
+    public void setExpiresAt(Instant expiresAt) {
+        this.expiresAt = expiresAt;
     }
 }

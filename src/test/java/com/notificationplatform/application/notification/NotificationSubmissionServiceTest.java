@@ -23,6 +23,7 @@ import com.notificationplatform.domain.repository.NotificationRequestRepository;
 import com.notificationplatform.domain.repository.NotificationTemplateRepository;
 import com.notificationplatform.domain.repository.OutboxEventRepository;
 import com.notificationplatform.domain.repository.ProductRepository;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -66,7 +67,7 @@ class NotificationSubmissionServiceTest {
         UUID productId = UUID.randomUUID();
         NotificationRequest existing = new NotificationRequest(
             new Product("Billing"),
-            template(new Product("Billing")),
+            "invoice.created",
             "user-1",
             "idem-1",
             "invoice"
@@ -124,15 +125,8 @@ class NotificationSubmissionServiceTest {
         UUID productId = UUID.randomUUID();
         Product product = new Product("Billing");
         ReflectionTestUtils.setField(product, "id", productId);
-        NotificationTemplate template = template(product);
 
         when(productRepository.findById(productId)).thenReturn(Optional.of(product));
-        when(templateRepository.findByProduct_IdAndTemplateKeyAndChannelAndStatus(
-            productId,
-            "invoice.created",
-            Channel.EMAIL,
-            TemplateStatus.ACTIVE
-        )).thenReturn(Optional.of(template));
         when(userPreferenceService.isChannelEnabled(productId, "user-1", "invoice", Channel.EMAIL)).thenReturn(false);
         when(requestRepository.save(any(NotificationRequest.class))).thenAnswer(invocation -> {
             NotificationRequest request = invocation.getArgument(0);
@@ -154,13 +148,14 @@ class NotificationSubmissionServiceTest {
         return new CreateNotificationCommand(
             productId,
             "invoice.created",
-            Channel.EMAIL,
+            List.of(Channel.EMAIL),
             "user-1",
             "idem-1",
             "invoice",
             NotificationPriority.HIGH,
             Map.of("name", "Ada"),
-            Map.of("email", "user@example.com")
+            Map.of("email", "user@example.com"),
+            null
         );
     }
 

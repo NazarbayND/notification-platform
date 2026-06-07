@@ -19,6 +19,7 @@ import com.notificationplatform.domain.model.NotificationPriority;
 import com.notificationplatform.domain.model.NotificationRequestStatus;
 import com.notificationplatform.domain.model.TemplateStatus;
 import com.notificationplatform.web.error.GlobalExceptionHandler;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -51,7 +52,7 @@ class NotificationControllerTest {
                     {
                       "productId": "%s",
                       "templateKey": "invoice.created",
-                      "channel": "EMAIL",
+                      "requestedChannels": ["EMAIL"],
                       "externalUserId": "user-1",
                       "idempotencyKey": "idem-1",
                       "category": "invoice",
@@ -89,7 +90,7 @@ class NotificationControllerTest {
                       "items": [
                         {
                           "templateKey": "invoice.created",
-                          "channel": "EMAIL",
+                          "requestedChannels": ["EMAIL"],
                           "externalUserId": "user-1",
                           "idempotencyKey": "idem-1",
                           "category": "invoice",
@@ -123,7 +124,8 @@ class NotificationControllerTest {
         template.setStatus(TemplateStatus.ACTIVE);
         ReflectionTestUtils.setField(template, "id", UUID.randomUUID());
 
-        NotificationRequest request = new NotificationRequest(product, template, "user-1", "idem-1", "invoice");
+        NotificationRequest request = new NotificationRequest(product, "invoice.created", "user-1", "idem-1", "invoice");
+        request.setRequestedChannels(List.of(Channel.EMAIL));
         request.setPriority(NotificationPriority.HIGH);
         request.setStatus(NotificationRequestStatus.DELIVERY_CREATED);
         request.setPayload(Map.of("name", "Ada"));

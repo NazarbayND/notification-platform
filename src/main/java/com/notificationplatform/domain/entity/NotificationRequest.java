@@ -1,6 +1,7 @@
 package com.notificationplatform.domain.entity;
 
 import com.notificationplatform.domain.common.BaseEntity;
+import com.notificationplatform.domain.model.Channel;
 import com.notificationplatform.domain.model.NotificationPriority;
 import com.notificationplatform.domain.model.NotificationRequestStatus;
 import jakarta.persistence.Column;
@@ -16,7 +17,10 @@ import jakarta.persistence.UniqueConstraint;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
@@ -44,10 +48,15 @@ public class NotificationRequest extends BaseEntity {
     @JoinColumn(name = "batch_id")
     private NotificationBatch batch;
 
+    @NotBlank
+    @Size(max = 120)
+    @Column(name = "template_key", nullable = false, length = 120)
+    private String templateKey;
+
     @NotNull
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "template_id", nullable = false)
-    private NotificationTemplate template;
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "requested_channels", nullable = false, columnDefinition = "jsonb")
+    private List<Channel> requestedChannels = new ArrayList<>();
 
     @NotBlank
     @Size(max = 160)
@@ -84,18 +93,21 @@ public class NotificationRequest extends BaseEntity {
     @Column(name = "status", nullable = false, length = 32)
     private NotificationRequestStatus status = NotificationRequestStatus.ACCEPTED;
 
+    @Column(name = "expires_at")
+    private Instant expiresAt;
+
     protected NotificationRequest() {
     }
 
     public NotificationRequest(
         Product product,
-        NotificationTemplate template,
+        String templateKey,
         String externalUserId,
         String idempotencyKey,
         String category
     ) {
         this.product = product;
-        this.template = template;
+        this.templateKey = templateKey;
         this.externalUserId = externalUserId;
         this.idempotencyKey = idempotencyKey;
         this.category = category;
@@ -117,12 +129,20 @@ public class NotificationRequest extends BaseEntity {
         this.batch = batch;
     }
 
-    public NotificationTemplate getTemplate() {
-        return template;
+    public String getTemplateKey() {
+        return templateKey;
     }
 
-    public void setTemplate(NotificationTemplate template) {
-        this.template = template;
+    public void setTemplateKey(String templateKey) {
+        this.templateKey = templateKey;
+    }
+
+    public List<Channel> getRequestedChannels() {
+        return requestedChannels;
+    }
+
+    public void setRequestedChannels(List<Channel> requestedChannels) {
+        this.requestedChannels = requestedChannels;
     }
 
     public String getExternalUserId() {
@@ -179,5 +199,13 @@ public class NotificationRequest extends BaseEntity {
 
     public void setStatus(NotificationRequestStatus status) {
         this.status = status;
+    }
+
+    public Instant getExpiresAt() {
+        return expiresAt;
+    }
+
+    public void setExpiresAt(Instant expiresAt) {
+        this.expiresAt = expiresAt;
     }
 }
