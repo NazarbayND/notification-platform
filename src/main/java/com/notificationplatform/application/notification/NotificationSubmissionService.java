@@ -30,12 +30,18 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import jakarta.persistence.criteria.JoinType;
+import jakarta.persistence.criteria.Predicate;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class NotificationSubmissionService {
 
+    private static final int DEFAULT_LIST_LIMIT = 100;
     private static final String AGGREGATE_NOTIFICATION_REQUEST = "NOTIFICATION_REQUEST";
     private static final String EVENT_NOTIFICATION_ACCEPTED = "NotificationAccepted";
     private static final String EVENT_NOTIFICATION_SKIPPED = "NotificationSkipped";
@@ -99,6 +105,27 @@ public class NotificationSubmissionService {
     }
 
     @Transactional(readOnly = true)
+    public List<NotificationRequest> listNotifications(
+        UUID productId,
+        NotificationRequestStatus status,
+        NotificationPriority priority,
+        Instant createdFrom,
+        Instant createdTo,
+        int limit
+    ) {
+        int requestedLimit = limit <= 0 ? DEFAULT_LIST_LIMIT : Math.min(limit, DEFAULT_LIST_LIMIT);
+        return requestRepository.findAll(
+            notificationListSpec(productId, status, priority, createdFrom, createdTo),
+            PageRequest.of(0, requestedLimit, Sort.by(Sort.Direction.DESC, "createdAt"))
+        ).getContent();
+    }
+
+    @Transactional(readOnly = true)
+    public long countNotifications() {
+        return requestRepository.count();
+    }
+
+    @Transactional(readOnly = true)
     public NotificationBatch getBatch(UUID batchId) {
         Objects.requireNonNull(batchId, "Batch id is required");
         return batchRepository.findById(batchId)
@@ -159,6 +186,40 @@ public class NotificationSubmissionService {
         }
 
         return batchRepository.save(savedBatch);
+    }
+
+    private Specification<NotificationRequest> notificationListSpec(
+        UUID productId,
+        NotificationRequestStatus status,
+        NotificationPriority priority,
+        Instant createdFrom,
+        Instant createdTo
+    ) {
+        return (root, query, criteriaBuilder) -> {
+            if (query != null && query.getResultType() != Long.class && query.getResultType() != long.class) {
+                root.fetch("product", JoinType.INNER);
+                root.fetch("batch", JoinType.LEFT);
+                query.distinct(true);
+            }
+
+            List<Predicate> predicates = new ArrayList<>();
+            if (productId != null) {
+                predicates.add(criteriaBuilder.equal(root.get("product").get("id"), productId));
+            }
+            if (status != null) {
+                predicates.add(criteriaBuilder.equal(root.get("status"), status));
+            }
+            if (priority != null) {
+                predicates.add(criteriaBuilder.equal(root.get("priority"), priority));
+            }
+            if (createdFrom != null) {
+                predicates.add(criteriaBuilder.greaterThanOrEqualTo(root.get("createdAt"), createdFrom));
+            }
+            if (createdTo != null) {
+                predicates.add(criteriaBuilder.lessThan(root.get("createdAt"), createdTo));
+            }
+            return criteriaBuilder.and(predicates.toArray(Predicate[]::new));
+        };
     }
 
     private NotificationRequest createNotification(CreateNotificationCommand command, NotificationBatch batch) {

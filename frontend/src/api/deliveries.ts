@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { request } from "./http";
 import type { Channel, Delivery, DeliveryStatus } from "../types/api";
 
 export interface DeliveryFilters {
@@ -15,9 +16,24 @@ export const deliveryKeys = {
 export function useDeliveries(filters: DeliveryFilters) {
   return useQuery({
     queryKey: deliveryKeys.list(filters),
-    queryFn: async () => {
-      // TODO: Connect when backend exposes GET /api/v1/admin/deliveries and GET /api/v1/notifications/{id}/deliveries.
-      return [] as Delivery[];
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (filters.status) {
+        params.set("status", filters.status);
+      }
+      if (filters.channel) {
+        params.set("channel", filters.channel);
+      }
+      if (filters.provider?.trim()) {
+        params.set("provider", filters.provider.trim());
+      }
+
+      if (filters.notificationRequestId) {
+        return request<Delivery[]>(`/notifications/${filters.notificationRequestId}/deliveries`);
+      }
+
+      const query = params.toString();
+      return request<Delivery[]>(`/admin/deliveries${query ? `?${query}` : ""}`);
     }
   });
 }

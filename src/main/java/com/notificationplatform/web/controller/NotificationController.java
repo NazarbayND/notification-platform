@@ -1,22 +1,31 @@
 package com.notificationplatform.web.controller;
 
+import com.notificationplatform.application.delivery.NotificationDeliveryService;
 import com.notificationplatform.application.notification.BatchNotificationItem;
 import com.notificationplatform.application.notification.CreateNotificationBatchCommand;
 import com.notificationplatform.application.notification.CreateNotificationCommand;
 import com.notificationplatform.application.notification.NotificationSubmissionService;
+import com.notificationplatform.domain.model.NotificationPriority;
+import com.notificationplatform.domain.model.NotificationRequestStatus;
 import com.notificationplatform.web.dto.BatchNotificationItemRequest;
+import com.notificationplatform.web.dto.DeliveryResponse;
 import com.notificationplatform.web.dto.NotificationBatchResponse;
 import com.notificationplatform.web.dto.NotificationResponse;
 import com.notificationplatform.web.dto.SendNotificationBatchRequest;
 import com.notificationplatform.web.dto.SendNotificationRequest;
 import jakarta.validation.Valid;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
+import java.util.List;
 import java.util.UUID;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -25,9 +34,14 @@ import org.springframework.web.bind.annotation.RestController;
 public class NotificationController {
 
     private final NotificationSubmissionService notificationSubmissionService;
+    private final NotificationDeliveryService notificationDeliveryService;
 
-    public NotificationController(NotificationSubmissionService notificationSubmissionService) {
+    public NotificationController(
+        NotificationSubmissionService notificationSubmissionService,
+        NotificationDeliveryService notificationDeliveryService
+    ) {
         this.notificationSubmissionService = notificationSubmissionService;
+        this.notificationDeliveryService = notificationDeliveryService;
     }
 
     @PostMapping("/notifications")
@@ -64,6 +78,36 @@ public class NotificationController {
     @GetMapping("/notifications/{id}")
     public NotificationResponse getNotification(@PathVariable UUID id) {
         return NotificationResponse.from(notificationSubmissionService.getNotification(id));
+    }
+
+    @GetMapping("/notifications")
+    public List<NotificationResponse> listNotifications(
+        @RequestParam(required = false) UUID productId,
+        @RequestParam(required = false) NotificationRequestStatus status,
+        @RequestParam(required = false) NotificationPriority priority,
+        @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateFrom,
+        @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateTo,
+        @RequestParam(defaultValue = "100") int limit
+    ) {
+        return notificationSubmissionService.listNotifications(
+                productId,
+                status,
+                priority,
+                dateFrom == null ? null : dateFrom.atStartOfDay().toInstant(ZoneOffset.UTC),
+                dateTo == null ? null : dateTo.plusDays(1).atStartOfDay().toInstant(ZoneOffset.UTC),
+                limit
+            )
+            .stream()
+            .map(NotificationResponse::from)
+            .toList();
+    }
+
+    @GetMapping("/notifications/{id}/deliveries")
+    public List<DeliveryResponse> listNotificationDeliveries(@PathVariable UUID id) {
+        notificationSubmissionService.getNotification(id);
+        return notificationDeliveryService.listDeliveries(id).stream()
+            .map(DeliveryResponse::from)
+            .toList();
     }
 
     private static BatchNotificationItem toBatchItem(BatchNotificationItemRequest request) {

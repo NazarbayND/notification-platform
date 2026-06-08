@@ -8,16 +8,42 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-public interface NotificationDeliveryRepository extends JpaRepository<NotificationDelivery, UUID> {
+import jakarta.persistence.LockModeType;
 
+public interface NotificationDeliveryRepository extends JpaRepository<NotificationDelivery, UUID>, JpaSpecificationExecutor<NotificationDelivery> {
+
+    @EntityGraph(attributePaths = {"notificationRequest", "template"})
     List<NotificationDelivery> findByNotificationRequest_IdOrderByCreatedAtAsc(UUID notificationRequestId);
 
     Optional<NotificationDelivery> findByProviderAndProviderMessageId(String provider, String providerMessageId);
 
+    long countByStatusIn(Collection<DeliveryStatus> statuses);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @EntityGraph(attributePaths = {"notificationRequest", "template"})
+    @Query("""
+        select delivery
+        from NotificationDelivery delivery
+        where delivery.id = :deliveryId
+        """)
+    Optional<NotificationDelivery> findByIdForUpdate(@Param("deliveryId") UUID deliveryId);
+
+    @EntityGraph(attributePaths = {"notificationRequest", "template"})
+    @Query("""
+        select delivery
+        from NotificationDelivery delivery
+        where delivery.id = :deliveryId
+        """)
+    Optional<NotificationDelivery> findByIdWithRequestAndTemplate(@Param("deliveryId") UUID deliveryId);
+
+    @EntityGraph(attributePaths = {"notificationRequest", "template"})
     @Query("""
         select delivery
         from NotificationDelivery delivery
@@ -34,4 +60,5 @@ public interface NotificationDeliveryRepository extends JpaRepository<Notificati
         @Param("now") Instant now,
         Pageable pageable
     );
+
 }

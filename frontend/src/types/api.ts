@@ -1,7 +1,7 @@
 export type Channel = "EMAIL" | "SMS" | "PUSH" | "IN_APP";
-export type ProductStatus = "ACTIVE" | "INACTIVE";
-export type TemplateStatus = "DRAFT" | "ACTIVE" | "INACTIVE";
-export type NotificationPriority = "LOW" | "NORMAL" | "HIGH" | "URGENT";
+export type ProductStatus = "ACTIVE" | "DISABLED";
+export type TemplateStatus = "DRAFT" | "ACTIVE" | "ARCHIVED";
+export type NotificationPriority = "LOW" | "NORMAL" | "HIGH";
 export type NotificationRequestStatus =
   | "ACCEPTED"
   | "DELIVERY_CREATED"
@@ -12,11 +12,13 @@ export type NotificationRequestStatus =
 export type DeliveryStatus =
   | "PENDING"
   | "PROCESSING"
+  | "SENDING"
   | "SENT"
   | "DELIVERED"
   | "FAILED"
   | "RETRY_SCHEDULED"
   | "DLQ"
+  | "DEAD_LETTERED"
   | "SKIPPED";
 
 export interface Product {

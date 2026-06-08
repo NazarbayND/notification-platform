@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { request } from "./http";
 import type { DashboardStats } from "../types/api";
 
 export const dashboardKeys = {
@@ -8,14 +9,6 @@ export const dashboardKeys = {
 export function useDashboardStats() {
   return useQuery({
     queryKey: dashboardKeys.stats,
-    queryFn: async (): Promise<DashboardStats> => {
-      // TODO: Connect when backend exposes an admin summary endpoint or list endpoints for notifications/deliveries.
-      return {
-        totalNotifications: null,
-        pendingDeliveries: null,
-        failedDeliveries: null,
-        deadLetteredDeliveries: null
-      };
-    }
+    queryFn: (): Promise<DashboardStats> => request<DashboardStats>("/admin/dashboard")
   });
 }

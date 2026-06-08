@@ -44,19 +44,20 @@ class NotificationDeliveryServiceTest {
     private NotificationRequestRepository requestRepository;
 
     @Test
-    void markProcessingCreatesDeliveryAttempt() {
+    void markSendingCreatesDeliveryAttempt() {
         NotificationDelivery delivery = deliveryWithAttemptCount(0, 3);
+        delivery.setStatus(DeliveryStatus.PENDING);
         NotificationDeliveryService service = service();
 
-        when(deliveryRepository.findById(delivery.getId())).thenReturn(Optional.of(delivery));
+        when(deliveryRepository.findByIdForUpdate(delivery.getId())).thenReturn(Optional.of(delivery));
         when(deliveryRepository.save(any(NotificationDelivery.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        NotificationDelivery result = service.markProcessing(delivery.getId(), null);
+        NotificationDelivery result = service.markSending(delivery.getId(), null);
 
         ArgumentCaptor<DeliveryAttempt> attemptCaptor = ArgumentCaptor.forClass(DeliveryAttempt.class);
         verify(deliveryAttemptRepository).save(attemptCaptor.capture());
 
-        assertThat(result.getStatus()).isEqualTo(DeliveryStatus.PROCESSING);
+        assertThat(result.getStatus()).isEqualTo(DeliveryStatus.SENDING);
         assertThat(result.getAttemptCount()).isEqualTo(1);
         assertThat(attemptCaptor.getValue().getAttemptNumber()).isEqualTo(1);
         assertThat(attemptCaptor.getValue().getRequestPayload()).containsEntry("channel", Channel.EMAIL);
@@ -99,9 +100,29 @@ class NotificationDeliveryServiceTest {
             "Rejected"
         ));
 
-        assertThat(result.getStatus()).isEqualTo(DeliveryStatus.DLQ);
+        assertThat(result.getStatus()).isEqualTo(DeliveryStatus.DEAD_LETTERED);
         assertThat(result.getFailedAt()).isEqualTo(NOW);
         assertThat(result.getNotificationRequest().getStatus()).isEqualTo(NotificationRequestStatus.FAILED);
+    }
+
+    @Test
+    void recordFailureUsesExponentialBackoffForLaterRetries() {
+        NotificationDelivery delivery = deliveryWithAttemptCount(2, 3);
+        NotificationDeliveryService service = service();
+
+        when(deliveryRepository.findById(delivery.getId())).thenReturn(Optional.of(delivery));
+        when(deliveryRepository.save(any(NotificationDelivery.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(deliveryRepository.findByNotificationRequest_IdOrderByCreatedAtAsc(delivery.getNotificationRequest().getId()))
+            .thenReturn(List.of(delivery));
+
+        NotificationDelivery result = service.recordFailure(new RecordDeliveryFailureCommand(
+            delivery.getId(),
+            "TEMPORARY",
+            "Provider timeout"
+        ));
+
+        assertThat(result.getStatus()).isEqualTo(DeliveryStatus.RETRY_SCHEDULED);
+        assertThat(result.getNextAttemptAt()).isEqualTo(NOW.plusSeconds(120));
     }
 
     private NotificationDeliveryService service() {
@@ -123,7 +144,7 @@ class NotificationDeliveryServiceTest {
 
         NotificationDelivery delivery = new NotificationDelivery(request, template, Channel.EMAIL, "user@example.com");
         ReflectionTestUtils.setField(delivery, "id", UUID.randomUUID());
-        delivery.setStatus(DeliveryStatus.PROCESSING);
+        delivery.setStatus(DeliveryStatus.SENDING);
         delivery.setAttemptCount(attemptCount);
         delivery.setMaxAttempts(maxAttempts);
         return delivery;

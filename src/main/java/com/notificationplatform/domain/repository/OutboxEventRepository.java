@@ -7,8 +7,12 @@ import java.util.List;
 import java.util.UUID;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+
+import jakarta.persistence.LockModeType;
+import java.util.Optional;
 
 public interface OutboxEventRepository extends JpaRepository<OutboxEvent, UUID> {
 
@@ -26,4 +30,12 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, UUID> 
         @Param("now") Instant now,
         Pageable pageable
     );
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+        select event
+        from OutboxEvent event
+        where event.id = :eventId
+        """)
+    Optional<OutboxEvent> findByIdForUpdate(@Param("eventId") UUID eventId);
 }

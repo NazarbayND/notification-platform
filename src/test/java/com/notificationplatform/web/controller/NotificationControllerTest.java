@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.notificationplatform.application.delivery.NotificationDeliveryService;
 import com.notificationplatform.application.common.ResourceNotFoundException;
 import com.notificationplatform.application.notification.NotificationSubmissionService;
 import com.notificationplatform.domain.entity.NotificationBatch;
@@ -40,6 +41,9 @@ class NotificationControllerTest {
 
     @MockBean
     private NotificationSubmissionService notificationSubmissionService;
+
+    @MockBean
+    private NotificationDeliveryService notificationDeliveryService;
 
     @Test
     void sendNotificationReturnsCreatedNotification() throws Exception {

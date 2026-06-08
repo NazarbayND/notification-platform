@@ -20,7 +20,7 @@ const notificationStatuses: NotificationRequestStatus[] = [
   "FAILED",
   "SKIPPED"
 ];
-const priorities: NotificationPriority[] = ["LOW", "NORMAL", "HIGH", "URGENT"];
+const priorities: NotificationPriority[] = ["LOW", "NORMAL", "HIGH"];
 
 export function NotificationsPage() {
   const navigate = useNavigate();

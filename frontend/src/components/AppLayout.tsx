@@ -1,11 +1,12 @@
 import { NavLink, Outlet } from "react-router-dom";
 
 const navItems = [
-  { to: "/", label: "Dashboard" },
-  { to: "/products", label: "Products" },
-  { to: "/templates", label: "Templates" },
-  { to: "/notifications", label: "Notifications" },
-  { to: "/deliveries", label: "Deliveries" }
+  { to: "/", label: "Dashboard", end: true },
+  { to: "/products", label: "Products", end: true },
+  { to: "/templates", label: "Templates", end: true },
+  { to: "/notifications", label: "Notifications", end: true },
+  { to: "/notifications/test", label: "Send Test", end: true },
+  { to: "/deliveries", label: "Deliveries", end: true }
 ];
 
 export function AppLayout() {
@@ -21,7 +22,7 @@ export function AppLayout() {
             <NavLink
               key={item.to}
               to={item.to}
-              end={item.to === "/"}
+              end={item.end}
               className={({ isActive }) =>
                 [
                   "mb-1 block rounded-md px-3 py-2 text-sm font-medium transition",
@@ -43,7 +44,7 @@ export function AppLayout() {
               <NavLink
                 key={item.to}
                 to={item.to}
-                end={item.to === "/"}
+                end={item.end}
                 className={({ isActive }) =>
                   [
                     "whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium",

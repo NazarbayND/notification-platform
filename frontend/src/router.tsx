@@ -5,6 +5,7 @@ import { DeliveriesPage } from "./pages/DeliveriesPage";
 import { NotificationDetailPage } from "./pages/NotificationDetailPage";
 import { NotificationsPage } from "./pages/NotificationsPage";
 import { ProductsPage } from "./pages/ProductsPage";
+import { TestNotificationPage } from "./pages/TestNotificationPage";
 import { TemplatesPage } from "./pages/TemplatesPage";
 
 export const router = createBrowserRouter([
@@ -16,6 +17,7 @@ export const router = createBrowserRouter([
       { path: "products", element: <ProductsPage /> },
       { path: "templates", element: <TemplatesPage /> },
       { path: "notifications", element: <NotificationsPage /> },
+      { path: "notifications/test", element: <TestNotificationPage /> },
       { path: "notifications/:id", element: <NotificationDetailPage /> },
       { path: "deliveries", element: <DeliveriesPage /> }
     ]

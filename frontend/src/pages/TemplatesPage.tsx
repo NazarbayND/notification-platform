@@ -12,7 +12,7 @@ import { formatDateTime } from "../lib/format";
 import type { Channel, TemplateStatus } from "../types/api";
 
 const channels: Channel[] = ["EMAIL", "SMS", "PUSH", "IN_APP"];
-const templateStatuses: TemplateStatus[] = ["DRAFT", "ACTIVE", "INACTIVE"];
+const templateStatuses: TemplateStatus[] = ["DRAFT", "ACTIVE", "ARCHIVED"];
 
 export function TemplatesPage() {
   const productsQuery = useProducts();

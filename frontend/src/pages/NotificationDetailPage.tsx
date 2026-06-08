@@ -60,8 +60,8 @@ export function NotificationDetailPage() {
             {deliveriesQuery.isLoading ? <LoadingBlock /> : null}
             {deliveriesQuery.data?.length === 0 ? (
               <StateBlock
-                title="Delivery detail endpoint is not available yet"
-                message="The backend has delivery services internally, but no controller endpoint currently exposes deliveries for a notification."
+                title="No deliveries found"
+                message="This notification does not have delivery rows yet."
               />
             ) : null}
             {deliveriesQuery.data && deliveriesQuery.data.length > 0 ? (

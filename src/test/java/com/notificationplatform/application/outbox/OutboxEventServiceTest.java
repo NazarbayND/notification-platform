@@ -32,7 +32,7 @@ class OutboxEventServiceTest {
         OutboxEvent event = event();
         OutboxEventService service = service();
 
-        when(outboxEventRepository.findById(event.getId())).thenReturn(Optional.of(event));
+        when(outboxEventRepository.findByIdForUpdate(event.getId())).thenReturn(Optional.of(event));
         when(outboxEventRepository.save(any(OutboxEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         OutboxEvent result = service.markPublished(event.getId());
@@ -42,17 +42,18 @@ class OutboxEventServiceTest {
     }
 
     @Test
-    void recordPublishFailureStoresErrorAndIncrementsAttemptCount() {
+    void recordPublishFailureStoresErrorIncrementsAttemptCountAndSchedulesRetry() {
         OutboxEvent event = event();
         OutboxEventService service = service();
 
-        when(outboxEventRepository.findById(event.getId())).thenReturn(Optional.of(event));
+        when(outboxEventRepository.findByIdForUpdate(event.getId())).thenReturn(Optional.of(event));
         when(outboxEventRepository.save(any(OutboxEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         OutboxEvent result = service.recordPublishFailure(event.getId(), " queue unavailable ");
 
-        assertThat(result.getStatus()).isEqualTo(OutboxEventStatus.FAILED);
+        assertThat(result.getStatus()).isEqualTo(OutboxEventStatus.PENDING);
         assertThat(result.getAttemptCount()).isEqualTo(1);
+        assertThat(result.getAvailableAt()).isEqualTo(NOW.plusSeconds(30));
         assertThat(result.getLastError()).isEqualTo("queue unavailable");
     }
 

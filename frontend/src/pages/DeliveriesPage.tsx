@@ -12,11 +12,13 @@ import type { Channel, DeliveryStatus } from "../types/api";
 const deliveryStatuses: DeliveryStatus[] = [
   "PENDING",
   "PROCESSING",
+  "SENDING",
   "SENT",
   "DELIVERED",
   "FAILED",
   "RETRY_SCHEDULED",
   "DLQ",
+  "DEAD_LETTERED",
   "SKIPPED"
 ];
 const channels: Channel[] = ["EMAIL", "SMS", "PUSH", "IN_APP"];
@@ -30,7 +32,7 @@ export function DeliveriesPage() {
 
   return (
     <>
-      <PageHeader title="Deliveries" description="Inspect delivery attempts and retry failed deliveries when supported by the backend." />
+      <PageHeader title="Deliveries" description="Inspect delivery attempts and provider results." />
 
       <div className="mb-6 grid gap-3 rounded-md border border-line bg-white p-4 shadow-sm md:grid-cols-3">
         <SelectField label="Status" value={status} onChange={(event) => setStatus(event.target.value as DeliveryStatus | "")}>
@@ -59,8 +61,8 @@ export function DeliveriesPage() {
       ) : null}
       {deliveriesQuery.data?.length === 0 ? (
         <StateBlock
-          title="Delivery list endpoint is not available yet"
-          message="Filters are ready, but the backend does not currently expose a delivery listing or retry controller endpoint."
+          title="No deliveries found"
+          message="Try changing the filters or send a test notification."
         />
       ) : null}
       {deliveriesQuery.data && deliveriesQuery.data.length > 0 ? (
@@ -68,7 +70,7 @@ export function DeliveriesPage() {
           {deliveriesQuery.data.map((delivery) => (
             <tr key={delivery.id}>
               <td className="px-4 py-3">{delivery.channel}</td>
-              <td className="px-4 py-3"><Badge value={delivery.status} tone={delivery.status === "DLQ" || delivery.status === "FAILED" ? "danger" : "neutral"} /></td>
+              <td className="px-4 py-3"><Badge value={delivery.status} tone={delivery.status === "DLQ" || delivery.status === "DEAD_LETTERED" || delivery.status === "FAILED" ? "danger" : "neutral"} /></td>
               <td className="px-4 py-3">{delivery.provider ?? "Not set"}</td>
               <td className="px-4 py-3">{delivery.attemptCount}/{delivery.maxAttempts}</td>
               <td className="px-4 py-3 text-slate-600">{formatDateTime(delivery.nextAttemptAt)}</td>
@@ -77,7 +79,8 @@ export function DeliveriesPage() {
                 <Button
                   type="button"
                   variant="secondary"
-                  disabled={delivery.status !== "FAILED" && delivery.status !== "DLQ"}
+                  disabled
+                  title="Manual retry endpoint is not available yet"
                   onClick={() => retryDelivery.mutate(delivery.id)}
                 >
                   Retry

@@ -4,6 +4,7 @@ import com.notificationplatform.application.common.ResourceNotFoundException;
 import com.notificationplatform.domain.entity.DeliveryAttempt;
 import com.notificationplatform.domain.entity.NotificationDelivery;
 import com.notificationplatform.domain.entity.NotificationRequest;
+import com.notificationplatform.domain.model.Channel;
 import com.notificationplatform.domain.model.DeliveryAttemptStatus;
 import com.notificationplatform.domain.model.DeliveryStatus;
 import com.notificationplatform.domain.model.NotificationRequestStatus;
@@ -13,14 +14,19 @@ import com.notificationplatform.domain.repository.NotificationRequestRepository;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import jakarta.persistence.criteria.JoinType;
+import jakarta.persistence.criteria.Predicate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -62,9 +68,51 @@ public class NotificationDeliveryService {
     }
 
     @Transactional(readOnly = true)
+    public NotificationDelivery getDeliveryForSending(UUID deliveryId) {
+        Objects.requireNonNull(deliveryId, "Delivery id is required");
+        return deliveryRepository.findByIdWithRequestAndTemplate(deliveryId)
+            .orElseThrow(() -> new ResourceNotFoundException("Notification delivery not found: " + deliveryId));
+    }
+
+    @Transactional(readOnly = true)
     public List<NotificationDelivery> listDeliveries(UUID notificationRequestId) {
         Objects.requireNonNull(notificationRequestId, "Notification request id is required");
         return deliveryRepository.findByNotificationRequest_IdOrderByCreatedAtAsc(notificationRequestId);
+    }
+
+    @Transactional(readOnly = true)
+    public List<NotificationDelivery> listDeliveries(
+        UUID notificationRequestId,
+        DeliveryStatus status,
+        Channel channel,
+        String provider,
+        int limit
+    ) {
+        int requestedLimit = limit <= 0 ? DEFAULT_POLL_LIMIT : Math.min(limit, DEFAULT_POLL_LIMIT);
+        return deliveryRepository.findAll(
+            deliveryListSpec(notificationRequestId, status, channel, trimToNull(provider)),
+            PageRequest.of(0, requestedLimit, Sort.by(Sort.Direction.DESC, "createdAt"))
+        ).getContent();
+    }
+
+    @Transactional(readOnly = true)
+    public long countPendingDeliveries() {
+        return deliveryRepository.countByStatusIn(EnumSet.of(
+            DeliveryStatus.PENDING,
+            DeliveryStatus.SENDING,
+            DeliveryStatus.PROCESSING,
+            DeliveryStatus.RETRY_SCHEDULED
+        ));
+    }
+
+    @Transactional(readOnly = true)
+    public long countFailedDeliveries() {
+        return deliveryRepository.countByStatusIn(EnumSet.of(DeliveryStatus.FAILED));
+    }
+
+    @Transactional(readOnly = true)
+    public long countDeadLetteredDeliveries() {
+        return deliveryRepository.countByStatusIn(EnumSet.of(DeliveryStatus.DEAD_LETTERED, DeliveryStatus.DLQ));
     }
 
     @Transactional(readOnly = true)
@@ -83,12 +131,31 @@ public class NotificationDeliveryService {
         );
     }
 
+    @Transactional(readOnly = true)
+    public List<NotificationDelivery> findReadyForRetry(int limit) {
+        int requestedLimit = limit <= 0 ? DEFAULT_POLL_LIMIT : limit;
+        return deliveryRepository.findReadyForAttempt(
+            EnumSet.of(DeliveryStatus.RETRY_SCHEDULED),
+            Instant.now(clock),
+            PageRequest.of(0, requestedLimit)
+        );
+    }
+
     @Transactional
     public NotificationDelivery markProcessing(UUID deliveryId, Duration lockDuration) {
+        return markSending(deliveryId, lockDuration);
+    }
+
+    @Transactional
+    public NotificationDelivery markSending(UUID deliveryId, Duration lockDuration) {
         Objects.requireNonNull(deliveryId, "Delivery id is required");
         Duration effectiveLockDuration = lockDuration == null ? Duration.ofMinutes(5) : lockDuration;
 
-        NotificationDelivery delivery = findDelivery(deliveryId);
+        NotificationDelivery delivery = findDeliveryForUpdate(deliveryId);
+        if (!isEligibleForSending(delivery)) {
+            return delivery;
+        }
+
         if (isExpired(delivery)) {
             delivery.setStatus(DeliveryStatus.SKIPPED);
             delivery.setLockedUntil(null);
@@ -97,7 +164,7 @@ public class NotificationDeliveryService {
             return savedDelivery;
         }
 
-        delivery.setStatus(DeliveryStatus.PROCESSING);
+        delivery.setStatus(DeliveryStatus.SENDING);
         delivery.setAttemptCount(delivery.getAttemptCount() + 1);
         delivery.setLockedUntil(Instant.now(clock).plus(effectiveLockDuration));
         NotificationDelivery savedDelivery = deliveryRepository.save(delivery);
@@ -168,7 +235,7 @@ public class NotificationDeliveryService {
         delivery.setLockedUntil(null);
 
         if (delivery.getAttemptCount() >= delivery.getMaxAttempts()) {
-            delivery.setStatus(DeliveryStatus.DLQ);
+            delivery.setStatus(DeliveryStatus.DEAD_LETTERED);
             delivery.setFailedAt(Instant.now(clock));
             delivery.setNextAttemptAt(null);
         } else {
@@ -196,6 +263,11 @@ public class NotificationDeliveryService {
             .orElseThrow(() -> new ResourceNotFoundException("Notification delivery not found: " + deliveryId));
     }
 
+    private NotificationDelivery findDeliveryForUpdate(UUID deliveryId) {
+        return deliveryRepository.findByIdForUpdate(deliveryId)
+            .orElseThrow(() -> new ResourceNotFoundException("Notification delivery not found: " + deliveryId));
+    }
+
     private void refreshRequestStatus(NotificationRequest request) {
         List<NotificationDelivery> deliveries = deliveryRepository.findByNotificationRequest_IdOrderByCreatedAtAsc(request.getId());
         if (deliveries.isEmpty()) {
@@ -207,10 +279,12 @@ public class NotificationDeliveryService {
                 || delivery.getStatus() == DeliveryStatus.DELIVERED
                 || delivery.getStatus() == DeliveryStatus.SKIPPED);
         boolean anyFailed = deliveries.stream()
-            .anyMatch(delivery -> delivery.getStatus() == DeliveryStatus.DLQ
+            .anyMatch(delivery -> delivery.getStatus() == DeliveryStatus.DEAD_LETTERED
+                || delivery.getStatus() == DeliveryStatus.DLQ
                 || delivery.getStatus() == DeliveryStatus.FAILED);
         boolean anyInProgress = deliveries.stream()
             .anyMatch(delivery -> delivery.getStatus() == DeliveryStatus.PENDING
+                || delivery.getStatus() == DeliveryStatus.SENDING
                 || delivery.getStatus() == DeliveryStatus.PROCESSING
                 || delivery.getStatus() == DeliveryStatus.RETRY_SCHEDULED);
 
@@ -221,6 +295,39 @@ public class NotificationDeliveryService {
         }
 
         requestRepository.save(request);
+    }
+
+    private Specification<NotificationDelivery> deliveryListSpec(
+        UUID notificationRequestId,
+        DeliveryStatus status,
+        Channel channel,
+        String provider
+    ) {
+        return (root, query, criteriaBuilder) -> {
+            if (query != null && query.getResultType() != Long.class && query.getResultType() != long.class) {
+                root.fetch("notificationRequest", JoinType.INNER);
+                root.fetch("template", JoinType.INNER);
+                query.distinct(true);
+            }
+
+            List<Predicate> predicates = new ArrayList<>();
+            if (notificationRequestId != null) {
+                predicates.add(criteriaBuilder.equal(root.get("notificationRequest").get("id"), notificationRequestId));
+            }
+            if (status != null) {
+                predicates.add(criteriaBuilder.equal(root.get("status"), status));
+            }
+            if (channel != null) {
+                predicates.add(criteriaBuilder.equal(root.get("channel"), channel));
+            }
+            if (provider != null) {
+                predicates.add(criteriaBuilder.like(
+                    criteriaBuilder.lower(root.get("provider")),
+                    "%" + provider.toLowerCase() + "%"
+                ));
+            }
+            return criteriaBuilder.and(predicates.toArray(Predicate[]::new));
+        };
     }
 
     private static Duration backoffForAttempt(int attemptCount) {
@@ -242,6 +349,15 @@ public class NotificationDeliveryService {
     private boolean isExpired(NotificationDelivery delivery) {
         Instant expiresAt = delivery.getExpiresAt();
         return expiresAt != null && !expiresAt.isAfter(Instant.now(clock));
+    }
+
+    private boolean isEligibleForSending(NotificationDelivery delivery) {
+        if (delivery.getStatus() == DeliveryStatus.PENDING) {
+            return true;
+        }
+        return delivery.getStatus() == DeliveryStatus.RETRY_SCHEDULED
+            && delivery.getNextAttemptAt() != null
+            && !delivery.getNextAttemptAt().isAfter(Instant.now(clock));
     }
 
     private static String trimToNull(String value) {
