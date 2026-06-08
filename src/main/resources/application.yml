@@ -22,6 +22,9 @@ spring:
     enabled: true
 
 notification:
+  email:
+    provider: mock
+    from: ${NOTIFICATION_EMAIL_FROM:no-reply@notification-platform.local}
   rabbitmq:
     exchange: notifications.exchange
     retry-delay: PT1M

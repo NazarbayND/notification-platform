@@ -3,7 +3,7 @@ package com.notificationplatform.application.worker;
 import com.notificationplatform.application.delivery.NotificationDeliveryService;
 import com.notificationplatform.application.delivery.RecordDeliveryFailureCommand;
 import com.notificationplatform.application.delivery.RecordDeliverySuccessCommand;
-import com.notificationplatform.application.provider.ProviderAdapter;
+import com.notificationplatform.application.provider.EmailProvider;
 import com.notificationplatform.application.provider.ProviderPermanentException;
 import com.notificationplatform.application.provider.ProviderSendRequest;
 import com.notificationplatform.application.provider.ProviderSendResult;
@@ -12,12 +12,10 @@ import com.notificationplatform.application.queue.DeliveryMessage;
 import com.notificationplatform.application.queue.QueuePublisher;
 import com.notificationplatform.application.queue.RabbitMqTopology;
 import com.notificationplatform.domain.entity.NotificationDelivery;
-import com.notificationplatform.domain.model.Channel;
 import com.notificationplatform.domain.model.DeliveryStatus;
 import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.core.Message;
@@ -32,23 +30,20 @@ public class EmailWorker {
 
     private final NotificationDeliveryService deliveryService;
     private final QueuePublisher queuePublisher;
-    private final ProviderAdapter emailProvider;
+    private final EmailProvider emailProvider;
     private final Duration lockDuration;
     private final Duration defaultRetryDelay;
 
     public EmailWorker(
         NotificationDeliveryService deliveryService,
         QueuePublisher queuePublisher,
-        List<ProviderAdapter> providerAdapters,
+        EmailProvider emailProvider,
         @Value("${notification.worker.email.lock-duration:PT5M}") Duration lockDuration,
         @Value("${notification.rabbitmq.retry-delay:PT1M}") Duration defaultRetryDelay
     ) {
         this.deliveryService = deliveryService;
         this.queuePublisher = queuePublisher;
-        this.emailProvider = providerAdapters.stream()
-            .filter(adapter -> adapter.supports(Channel.EMAIL))
-            .findFirst()
-            .orElseThrow(() -> new IllegalStateException("No EMAIL provider adapter configured"));
+        this.emailProvider = emailProvider;
         this.lockDuration = lockDuration;
         this.defaultRetryDelay = defaultRetryDelay;
     }
