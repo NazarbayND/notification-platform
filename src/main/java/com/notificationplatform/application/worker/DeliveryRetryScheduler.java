@@ -36,7 +36,8 @@ public class DeliveryRetryScheduler {
                     delivery.getNotificationRequest().getId(),
                     delivery.getId(),
                     delivery.getChannel(),
-                    priority
+                    priority,
+                    delivery.getAttemptCount() + 1
                 )
             );
         }

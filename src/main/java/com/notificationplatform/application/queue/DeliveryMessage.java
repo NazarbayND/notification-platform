@@ -8,6 +8,7 @@ public record DeliveryMessage(
     UUID notificationRequestId,
     UUID deliveryId,
     Channel channel,
-    NotificationPriority priority
+    NotificationPriority priority,
+    int attemptNumber
 ) {
 }

@@ -68,6 +68,7 @@ class OutboxPublisherTest {
 
         assertThat(messageCaptor.getValue().deliveryId()).isEqualTo(delivery.getId());
         assertThat(messageCaptor.getValue().channel()).isEqualTo(Channel.EMAIL);
+        assertThat(messageCaptor.getValue().attemptNumber()).isEqualTo(1);
         assertThat(event.getStatus()).isEqualTo(OutboxEventStatus.PUBLISHED);
         assertThat(event.getPublishedAt()).isEqualTo(NOW);
     }

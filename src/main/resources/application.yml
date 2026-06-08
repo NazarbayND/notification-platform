@@ -5,9 +5,23 @@ spring:
     url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/notification_platform}
     username: ${DATABASE_USERNAME:notification}
     password: ${DATABASE_PASSWORD:notification}
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:notification}
+    password: ${RABBITMQ_PASSWORD:notification}
+    listener:
+      simple:
+        acknowledge-mode: manual
+        prefetch: ${RABBITMQ_PREFETCH:10}
   jpa:
     hibernate:
       ddl-auto: validate
     open-in-view: false
   flyway:
     enabled: true
+
+notification:
+  rabbitmq:
+    exchange: notifications.exchange
+    retry-delay: PT1M

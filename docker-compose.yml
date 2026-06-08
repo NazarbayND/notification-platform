@@ -1,0 +1,29 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: notification-platform-postgres
+    environment:
+      POSTGRES_DB: notification_platform
+      POSTGRES_USER: notification
+      POSTGRES_PASSWORD: notification
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  rabbitmq:
+    image: rabbitmq:4-management
+    container_name: notification-platform-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: notification
+      RABBITMQ_DEFAULT_PASS: notification
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+
+
+volumes:
+  postgres-data:
+  rabbitmq-data:

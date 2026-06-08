@@ -121,7 +121,13 @@ public class OutboxPublisher {
 
             queuePublisher.publish(
                 priority,
-                new DeliveryMessage(requestId, delivery.getId(), delivery.getChannel(), priority)
+                new DeliveryMessage(
+                    requestId,
+                    delivery.getId(),
+                    delivery.getChannel(),
+                    priority,
+                    delivery.getAttemptCount() + 1
+                )
             );
         }
     }
