@@ -6,6 +6,9 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.notificationplatform.application.cache.NotificationCacheService;
+import com.notificationplatform.application.observability.NotificationMetrics;
+import com.notificationplatform.application.observability.NotificationTracing;
 import com.notificationplatform.application.preferences.UserPreferenceService;
 import com.notificationplatform.domain.entity.NotificationDelivery;
 import com.notificationplatform.domain.entity.NotificationRequest;
@@ -27,10 +30,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import io.micrometer.observation.ObservationRegistry;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -59,8 +64,36 @@ class NotificationSubmissionServiceTest {
     @Mock
     private UserPreferenceService userPreferenceService;
 
-    @InjectMocks
+    @Mock
+    private NotificationCacheService cacheService;
+
     private NotificationSubmissionService service;
+
+    @BeforeEach
+    void setUp() {
+        service = new NotificationSubmissionService(
+            productRepository,
+            templateRepository,
+            requestRepository,
+            deliveryRepository,
+            batchRepository,
+            outboxEventRepository,
+            userPreferenceService,
+            new NotificationMetrics(new SimpleMeterRegistry()),
+            cacheService,
+            new NotificationTracing(ObservationRegistry.create())
+        );
+        org.mockito.Mockito.lenient()
+            .when(cacheService.getIdempotentNotificationId(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(Optional.empty());
+        org.mockito.Mockito.lenient()
+            .when(cacheService.getActiveTemplateId(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any()
+            ))
+            .thenReturn(Optional.empty());
+    }
 
     @Test
     void createNotificationReturnsExistingRequestForSameIdempotencyKey() {

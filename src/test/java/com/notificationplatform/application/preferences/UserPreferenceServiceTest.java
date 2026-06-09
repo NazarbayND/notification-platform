@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.notificationplatform.application.cache.NotificationCacheService;
 import com.notificationplatform.domain.entity.Product;
 import com.notificationplatform.domain.entity.UserNotificationPreference;
 import com.notificationplatform.domain.model.Channel;
@@ -26,6 +27,9 @@ class UserPreferenceServiceTest {
 
     @Mock
     private UserNotificationPreferenceRepository preferenceRepository;
+
+    @Mock
+    private NotificationCacheService cacheService;
 
     @InjectMocks
     private UserPreferenceService service;
@@ -87,6 +91,7 @@ class UserPreferenceServiceTest {
     @Test
     void isChannelEnabledDefaultsToTrueWhenNoPreferenceExists() {
         UUID productId = UUID.randomUUID();
+        when(cacheService.getPreferenceEnabled(productId, "user-1", "invoice", Channel.PUSH)).thenReturn(Optional.empty());
 
         boolean enabled = service.isChannelEnabled(productId, "user-1", "invoice", Channel.PUSH);
 

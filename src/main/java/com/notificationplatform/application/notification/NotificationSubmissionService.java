@@ -1,6 +1,9 @@
 package com.notificationplatform.application.notification;
 
 import com.notificationplatform.application.common.ResourceNotFoundException;
+import com.notificationplatform.application.cache.NotificationCacheService;
+import com.notificationplatform.application.observability.NotificationMetrics;
+import com.notificationplatform.application.observability.NotificationTracing;
 import com.notificationplatform.application.preferences.UserPreferenceService;
 import com.notificationplatform.domain.entity.NotificationBatch;
 import com.notificationplatform.domain.entity.NotificationDelivery;
@@ -53,6 +56,9 @@ public class NotificationSubmissionService {
     private final NotificationBatchRepository batchRepository;
     private final OutboxEventRepository outboxEventRepository;
     private final UserPreferenceService userPreferenceService;
+    private final NotificationMetrics metrics;
+    private final NotificationCacheService cacheService;
+    private final NotificationTracing tracing;
 
     public NotificationSubmissionService(
         ProductRepository productRepository,
@@ -61,7 +67,10 @@ public class NotificationSubmissionService {
         NotificationDeliveryRepository deliveryRepository,
         NotificationBatchRepository batchRepository,
         OutboxEventRepository outboxEventRepository,
-        UserPreferenceService userPreferenceService
+        UserPreferenceService userPreferenceService,
+        NotificationMetrics metrics,
+        NotificationCacheService cacheService,
+        NotificationTracing tracing
     ) {
         this.productRepository = productRepository;
         this.templateRepository = templateRepository;
@@ -70,17 +79,24 @@ public class NotificationSubmissionService {
         this.batchRepository = batchRepository;
         this.outboxEventRepository = outboxEventRepository;
         this.userPreferenceService = userPreferenceService;
+        this.metrics = metrics;
+        this.cacheService = cacheService;
+        this.tracing = tracing;
     }
 
     @Transactional
     public NotificationRequest createNotification(CreateNotificationCommand command) {
-        Objects.requireNonNull(command, "Create notification command is required");
-        Objects.requireNonNull(command.productId(), "Product id is required");
-        normalizeRequestedChannels(command.requestedChannels());
-        String idempotencyKey = normalizeRequired(command.idempotencyKey(), "Idempotency key is required");
+        return metrics.recordNotificationCreate(() -> {
+            Objects.requireNonNull(command, "Create notification command is required");
+            Objects.requireNonNull(command.productId(), "Product id is required");
+            normalizeRequestedChannels(command.requestedChannels());
+            String idempotencyKey = normalizeRequired(command.idempotencyKey(), "Idempotency key is required");
 
-        return requestRepository.findByProduct_IdAndIdempotencyKey(command.productId(), idempotencyKey)
-            .orElseGet(() -> createNotification(command, null));
+            return tracing.observe("notification.idempotency.check", () ->
+                findIdempotentRequest(command.productId(), idempotencyKey)
+                    .orElseGet(() -> createNotification(command, null))
+            );
+        });
     }
 
     @Transactional
@@ -162,13 +178,14 @@ public class NotificationSubmissionService {
         NotificationBatch batch = new NotificationBatch(product, idempotencyKey, items.size());
         batch.setStatus(BatchStatus.PROCESSING);
         NotificationBatch savedBatch = batchRepository.save(batch);
+        metrics.incrementNotificationBatchesCreated();
 
         int acceptedCount = 0;
         int failedCount = 0;
 
         for (BatchNotificationItem item : items) {
             try {
-                createNotification(toNotificationCommand(command.productId(), item), savedBatch);
+                tracing.observe("notification.batch.item.create", () -> createNotification(toNotificationCommand(command.productId(), item), savedBatch));
                 acceptedCount++;
             } catch (RuntimeException ex) {
                 failedCount++;
@@ -251,8 +268,10 @@ public class NotificationSubmissionService {
 
         if (isExpired(command.expiresAt())) {
             request.setStatus(NotificationRequestStatus.SKIPPED);
-            NotificationRequest savedRequest = requestRepository.save(request);
-            outboxEventRepository.save(new OutboxEvent(
+            NotificationRequest savedRequest = tracing.observe("notification.persistence", () -> requestRepository.save(request));
+            metrics.incrementNotificationsCreated();
+            cacheService.putIdempotentNotificationId(command.productId(), idempotencyKey, savedRequest.getId());
+            saveOutboxEvent(new OutboxEvent(
                 AGGREGATE_NOTIFICATION_REQUEST,
                 savedRequest.getId(),
                 EVENT_NOTIFICATION_SKIPPED,
@@ -273,12 +292,7 @@ public class NotificationSubmissionService {
                 continue;
             }
 
-            NotificationTemplate template = templateRepository.findByProduct_IdAndTemplateKeyAndChannelAndStatus(
-                command.productId(),
-                templateKey,
-                channel,
-                TemplateStatus.ACTIVE
-            ).orElseThrow(() -> new ResourceNotFoundException("Active template not found for channel: " + channel));
+            NotificationTemplate template = resolveActiveTemplate(command.productId(), templateKey, channel);
 
             String destination = resolveDestination(channel, request.getRecipient());
             NotificationDelivery delivery = new NotificationDelivery(request, template, channel, destination);
@@ -289,8 +303,10 @@ public class NotificationSubmissionService {
 
         if (deliveries.isEmpty()) {
             request.setStatus(NotificationRequestStatus.SKIPPED);
-            NotificationRequest savedRequest = requestRepository.save(request);
-            outboxEventRepository.save(new OutboxEvent(
+            NotificationRequest savedRequest = tracing.observe("notification.persistence", () -> requestRepository.save(request));
+            metrics.incrementNotificationsCreated();
+            cacheService.putIdempotentNotificationId(command.productId(), idempotencyKey, savedRequest.getId());
+            saveOutboxEvent(new OutboxEvent(
                 AGGREGATE_NOTIFICATION_REQUEST,
                 savedRequest.getId(),
                 EVENT_NOTIFICATION_SKIPPED,
@@ -300,18 +316,20 @@ public class NotificationSubmissionService {
         }
 
         request.setStatus(NotificationRequestStatus.DELIVERY_CREATED);
-        NotificationRequest savedRequest = requestRepository.save(request);
+        NotificationRequest savedRequest = tracing.observe("notification.persistence", () -> requestRepository.save(request));
+        metrics.incrementNotificationsCreated();
+        cacheService.putIdempotentNotificationId(command.productId(), idempotencyKey, savedRequest.getId());
 
         List<UUID> deliveryIds = new ArrayList<>();
         for (NotificationDelivery delivery : deliveries) {
             delivery.setNotificationRequest(savedRequest);
-            NotificationDelivery savedDelivery = deliveryRepository.save(delivery);
+            NotificationDelivery savedDelivery = tracing.observe("notification.delivery.persistence", () -> deliveryRepository.save(delivery));
             deliveryIds.add(savedDelivery.getId());
         }
 
         Map<String, Object> eventPayload = requestEventPayload(savedRequest);
         eventPayload.put("deliveryIds", deliveryIds);
-        outboxEventRepository.save(new OutboxEvent(
+        saveOutboxEvent(new OutboxEvent(
             AGGREGATE_NOTIFICATION_REQUEST,
             savedRequest.getId(),
             EVENT_NOTIFICATION_ACCEPTED,
@@ -319,6 +337,43 @@ public class NotificationSubmissionService {
         ));
 
         return savedRequest;
+    }
+
+    private OutboxEvent saveOutboxEvent(OutboxEvent event) {
+        OutboxEvent savedEvent = tracing.observe("outbox.event.create", () -> outboxEventRepository.save(event));
+        metrics.incrementOutboxEventsCreated();
+        return savedEvent;
+    }
+
+    private Optional<NotificationRequest> findIdempotentRequest(UUID productId, String idempotencyKey) {
+        Optional<UUID> cachedRequestId = cacheService.getIdempotentNotificationId(productId, idempotencyKey);
+        if (cachedRequestId.isPresent()) {
+            Optional<NotificationRequest> cachedRequest = requestRepository.findById(cachedRequestId.get());
+            if (cachedRequest.isPresent()) {
+                return cachedRequest;
+            }
+            cacheService.evictIdempotentNotificationId(productId, idempotencyKey);
+        }
+
+        Optional<NotificationRequest> request = requestRepository.findByProduct_IdAndIdempotencyKey(productId, idempotencyKey);
+        request.ifPresent(value -> cacheService.putIdempotentNotificationId(productId, idempotencyKey, value.getId()));
+        return request;
+    }
+
+    private NotificationTemplate resolveActiveTemplate(UUID productId, String templateKey, Channel channel) {
+        return cacheService.getActiveTemplateId(productId, templateKey, channel)
+            .flatMap(templateRepository::findById)
+            .filter(template -> template.getStatus() == TemplateStatus.ACTIVE)
+            .orElseGet(() -> {
+                NotificationTemplate template = templateRepository.findByProduct_IdAndTemplateKeyAndChannelAndStatus(
+                    productId,
+                    templateKey,
+                    channel,
+                    TemplateStatus.ACTIVE
+                ).orElseThrow(() -> new ResourceNotFoundException("Active template not found for channel: " + channel));
+                cacheService.putActiveTemplateId(productId, templateKey, channel, template.getId());
+                return template;
+            });
     }
 
     private static CreateNotificationCommand toNotificationCommand(UUID productId, BatchNotificationItem item) {

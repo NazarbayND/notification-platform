@@ -4,10 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 
+import com.notificationplatform.application.observability.NotificationMetrics;
+import com.notificationplatform.application.observability.NotificationTracing;
 import com.notificationplatform.domain.model.Channel;
 import com.notificationplatform.domain.model.NotificationPriority;
 import java.time.Duration;
 import java.util.UUID;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import io.micrometer.observation.ObservationRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -27,7 +31,7 @@ class RabbitMqQueuePublisherTest {
 
     @Test
     void publishRoutesHighEmailMessageAsPersistent() throws Exception {
-        RabbitMqQueuePublisher publisher = new RabbitMqQueuePublisher(rabbitTemplate, RabbitMqTopology.EXCHANGE);
+        RabbitMqQueuePublisher publisher = publisher();
         DeliveryMessage message = message(NotificationPriority.HIGH);
 
         publisher.publish(NotificationPriority.HIGH, message);
@@ -47,7 +51,7 @@ class RabbitMqQueuePublisherTest {
 
     @Test
     void publishRetryRoutesToRetryQueueWithDelay() throws Exception {
-        RabbitMqQueuePublisher publisher = new RabbitMqQueuePublisher(rabbitTemplate, RabbitMqTopology.EXCHANGE);
+        RabbitMqQueuePublisher publisher = publisher();
         DeliveryMessage message = message(NotificationPriority.NORMAL);
 
         publisher.publishRetry(message, Duration.ofMinutes(2));
@@ -67,7 +71,7 @@ class RabbitMqQueuePublisherTest {
 
     @Test
     void publishDeadLetterRoutesToDlqAsPersistent() throws Exception {
-        RabbitMqQueuePublisher publisher = new RabbitMqQueuePublisher(rabbitTemplate, RabbitMqTopology.EXCHANGE);
+        RabbitMqQueuePublisher publisher = publisher();
         DeliveryMessage message = message(NotificationPriority.NORMAL);
 
         publisher.publishDeadLetter(message);
@@ -82,6 +86,15 @@ class RabbitMqQueuePublisherTest {
 
         Message processedMessage = postProcessorCaptor.getValue().postProcessMessage(new Message(new byte[0], new MessageProperties()));
         assertThat(processedMessage.getMessageProperties().getDeliveryMode()).isEqualTo(MessageDeliveryMode.PERSISTENT);
+    }
+
+    private RabbitMqQueuePublisher publisher() {
+        return new RabbitMqQueuePublisher(
+            rabbitTemplate,
+            RabbitMqTopology.EXCHANGE,
+            new NotificationMetrics(new SimpleMeterRegistry()),
+            new NotificationTracing(ObservationRegistry.create())
+        );
     }
 
     private static DeliveryMessage message(NotificationPriority priority) {

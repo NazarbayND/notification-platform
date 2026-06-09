@@ -2,6 +2,7 @@ package com.notificationplatform.application.management;
 
 import com.notificationplatform.application.common.ConflictException;
 import com.notificationplatform.application.common.ResourceNotFoundException;
+import com.notificationplatform.application.cache.NotificationCacheService;
 import com.notificationplatform.domain.entity.NotificationTemplate;
 import com.notificationplatform.domain.entity.Product;
 import com.notificationplatform.domain.model.Channel;
@@ -19,13 +20,16 @@ public class TemplateManagementService {
 
     private final ProductRepository productRepository;
     private final NotificationTemplateRepository templateRepository;
+    private final NotificationCacheService cacheService;
 
     public TemplateManagementService(
         ProductRepository productRepository,
-        NotificationTemplateRepository templateRepository
+        NotificationTemplateRepository templateRepository,
+        NotificationCacheService cacheService
     ) {
         this.productRepository = productRepository;
         this.templateRepository = templateRepository;
+        this.cacheService = cacheService;
     }
 
     @Transactional
@@ -72,7 +76,11 @@ public class TemplateManagementService {
         template.setSubject(trimToNull(command.subject()));
         template.setStatus(status);
 
-        return templateRepository.save(template);
+        NotificationTemplate savedTemplate = templateRepository.save(template);
+        if (savedTemplate.getStatus() == TemplateStatus.ACTIVE) {
+            cacheService.evictActiveTemplate(command.productId(), templateKey, channel);
+        }
+        return savedTemplate;
     }
 
     @Transactional(readOnly = true)
@@ -92,12 +100,19 @@ public class TemplateManagementService {
         Objects.requireNonNull(channel, "Template channel is required");
         String normalizedTemplateKey = normalizeRequired(templateKey, "Template key is required");
 
-        return templateRepository.findByProduct_IdAndTemplateKeyAndChannelAndStatus(
+        return cacheService.getActiveTemplateId(productId, normalizedTemplateKey, channel)
+            .flatMap(templateRepository::findById)
+            .filter(template -> template.getStatus() == TemplateStatus.ACTIVE)
+            .orElseGet(() -> {
+                NotificationTemplate template = templateRepository.findByProduct_IdAndTemplateKeyAndChannelAndStatus(
             productId,
             normalizedTemplateKey,
             channel,
             TemplateStatus.ACTIVE
-        ).orElseThrow(() -> new ResourceNotFoundException("Active template not found"));
+                ).orElseThrow(() -> new ResourceNotFoundException("Active template not found"));
+                cacheService.putActiveTemplateId(productId, normalizedTemplateKey, channel, template.getId());
+                return template;
+            });
     }
 
     private static String normalizeRequired(String value, String message) {

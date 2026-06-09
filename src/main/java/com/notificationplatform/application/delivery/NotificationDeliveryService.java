@@ -1,6 +1,7 @@
 package com.notificationplatform.application.delivery;
 
 import com.notificationplatform.application.common.ResourceNotFoundException;
+import com.notificationplatform.application.observability.NotificationMetrics;
 import com.notificationplatform.domain.entity.DeliveryAttempt;
 import com.notificationplatform.domain.entity.NotificationDelivery;
 import com.notificationplatform.domain.entity.NotificationRequest;
@@ -39,26 +40,30 @@ public class NotificationDeliveryService {
     private final DeliveryAttemptRepository deliveryAttemptRepository;
     private final NotificationRequestRepository requestRepository;
     private final Clock clock;
+    private final NotificationMetrics metrics;
 
     @Autowired
     public NotificationDeliveryService(
         NotificationDeliveryRepository deliveryRepository,
         DeliveryAttemptRepository deliveryAttemptRepository,
-        NotificationRequestRepository requestRepository
+        NotificationRequestRepository requestRepository,
+        NotificationMetrics metrics
     ) {
-        this(deliveryRepository, deliveryAttemptRepository, requestRepository, Clock.systemUTC());
+        this(deliveryRepository, deliveryAttemptRepository, requestRepository, Clock.systemUTC(), metrics);
     }
 
     NotificationDeliveryService(
         NotificationDeliveryRepository deliveryRepository,
         DeliveryAttemptRepository deliveryAttemptRepository,
         NotificationRequestRepository requestRepository,
-        Clock clock
+        Clock clock,
+        NotificationMetrics metrics
     ) {
         this.deliveryRepository = deliveryRepository;
         this.deliveryAttemptRepository = deliveryAttemptRepository;
         this.requestRepository = requestRepository;
         this.clock = clock;
+        this.metrics = metrics;
     }
 
     @Transactional(readOnly = true)
@@ -173,6 +178,7 @@ public class NotificationDeliveryService {
         attempt.setStartedAt(Instant.now(clock));
         attempt.setRequestPayload(attemptRequestPayload(savedDelivery));
         deliveryAttemptRepository.save(attempt);
+        metrics.incrementDeliveryAttempts();
 
         return savedDelivery;
     }
@@ -207,6 +213,7 @@ public class NotificationDeliveryService {
             deliveryAttemptRepository.save(attempt);
         });
         refreshRequestStatus(savedDelivery.getNotificationRequest());
+        metrics.incrementDeliveriesSent();
         return savedDelivery;
     }
 
@@ -244,9 +251,47 @@ public class NotificationDeliveryService {
         }
 
         NotificationDelivery savedDelivery = deliveryRepository.save(delivery);
+        markCurrentAttemptFailed(savedDelivery, command);
+        refreshRequestStatus(savedDelivery.getNotificationRequest());
+        if (savedDelivery.getStatus() == DeliveryStatus.DEAD_LETTERED || savedDelivery.getStatus() == DeliveryStatus.DLQ) {
+            metrics.incrementDeliveriesDeadLettered();
+        }
+        return savedDelivery;
+    }
+
+    @Transactional
+    public NotificationDelivery recordTerminalFailure(RecordDeliveryFailureCommand command, DeliveryStatus terminalStatus) {
+        Objects.requireNonNull(command, "Record delivery failure command is required");
+        Objects.requireNonNull(command.deliveryId(), "Delivery id is required");
+        if (terminalStatus != DeliveryStatus.FAILED
+            && terminalStatus != DeliveryStatus.DEAD_LETTERED
+            && terminalStatus != DeliveryStatus.DLQ) {
+            throw new IllegalArgumentException("Terminal failure status is required");
+        }
+
+        NotificationDelivery delivery = findDelivery(command.deliveryId());
+        delivery.setLastErrorCode(trimToNull(command.errorCode()));
+        delivery.setLastErrorMessage(trimToNull(command.errorMessage()));
+        delivery.setStatus(terminalStatus);
+        delivery.setFailedAt(Instant.now(clock));
+        delivery.setNextAttemptAt(null);
+        delivery.setLockedUntil(null);
+
+        NotificationDelivery savedDelivery = deliveryRepository.save(delivery);
+        markCurrentAttemptFailed(savedDelivery, command);
+        refreshRequestStatus(savedDelivery.getNotificationRequest());
+        if (savedDelivery.getStatus() == DeliveryStatus.FAILED) {
+            metrics.incrementDeliveriesFailed();
+        } else if (savedDelivery.getStatus() == DeliveryStatus.DEAD_LETTERED || savedDelivery.getStatus() == DeliveryStatus.DLQ) {
+            metrics.incrementDeliveriesDeadLettered();
+        }
+        return savedDelivery;
+    }
+
+    private void markCurrentAttemptFailed(NotificationDelivery delivery, RecordDeliveryFailureCommand command) {
         deliveryAttemptRepository.findByNotificationDelivery_IdAndAttemptNumber(
-            savedDelivery.getId(),
-            savedDelivery.getAttemptCount()
+            delivery.getId(),
+            delivery.getAttemptCount()
         ).ifPresent(attempt -> {
             attempt.setStatus(DeliveryAttemptStatus.FAILED);
             attempt.setErrorCode(trimToNull(command.errorCode()));
@@ -254,8 +299,6 @@ public class NotificationDeliveryService {
             attempt.setCompletedAt(Instant.now(clock));
             deliveryAttemptRepository.save(attempt);
         });
-        refreshRequestStatus(savedDelivery.getNotificationRequest());
-        return savedDelivery;
     }
 
     private NotificationDelivery findDelivery(UUID deliveryId) {

@@ -1,6 +1,7 @@
 package com.notificationplatform.application.preferences;
 
 import com.notificationplatform.application.common.ResourceNotFoundException;
+import com.notificationplatform.application.cache.NotificationCacheService;
 import com.notificationplatform.domain.entity.Product;
 import com.notificationplatform.domain.entity.UserNotificationPreference;
 import com.notificationplatform.domain.model.Channel;
@@ -17,13 +18,16 @@ public class UserPreferenceService {
 
     private final ProductRepository productRepository;
     private final UserNotificationPreferenceRepository preferenceRepository;
+    private final NotificationCacheService cacheService;
 
     public UserPreferenceService(
         ProductRepository productRepository,
-        UserNotificationPreferenceRepository preferenceRepository
+        UserNotificationPreferenceRepository preferenceRepository,
+        NotificationCacheService cacheService
     ) {
         this.productRepository = productRepository;
         this.preferenceRepository = preferenceRepository;
+        this.cacheService = cacheService;
     }
 
     @Transactional
@@ -34,7 +38,7 @@ public class UserPreferenceService {
         String externalUserId = normalizeRequired(command.externalUserId(), "External user id is required");
         String category = normalizeRequired(command.category(), "Preference category is required");
 
-        return preferenceRepository.findByProduct_IdAndExternalUserIdAndCategoryAndChannel(
+        UserNotificationPreference preference = preferenceRepository.findByProduct_IdAndExternalUserIdAndCategoryAndChannel(
             command.productId(),
             externalUserId,
             category,
@@ -53,6 +57,8 @@ public class UserPreferenceService {
                 command.enabled()
             ));
         });
+        cacheService.evictPreference(command.productId(), externalUserId, category, channel);
+        return preference;
     }
 
     @Transactional(readOnly = true)
@@ -72,12 +78,17 @@ public class UserPreferenceService {
         String normalizedExternalUserId = normalizeRequired(externalUserId, "External user id is required");
         String normalizedCategory = normalizeRequired(category, "Preference category is required");
 
-        return preferenceRepository.findByProduct_IdAndExternalUserIdAndCategoryAndChannel(
+        return cacheService.getPreferenceEnabled(productId, normalizedExternalUserId, normalizedCategory, channel)
+            .orElseGet(() -> {
+                boolean enabled = preferenceRepository.findByProduct_IdAndExternalUserIdAndCategoryAndChannel(
             productId,
             normalizedExternalUserId,
             normalizedCategory,
             channel
-        ).map(UserNotificationPreference::isEnabled).orElse(true);
+                ).map(UserNotificationPreference::isEnabled).orElse(true);
+                cacheService.putPreferenceEnabled(productId, normalizedExternalUserId, normalizedCategory, channel, enabled);
+                return enabled;
+            });
     }
 
     private static String normalizeRequired(String value, String message) {

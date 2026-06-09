@@ -3,6 +3,9 @@ package com.notificationplatform.application.worker;
 import com.notificationplatform.application.delivery.NotificationDeliveryService;
 import com.notificationplatform.application.delivery.RecordDeliveryFailureCommand;
 import com.notificationplatform.application.delivery.RecordDeliverySuccessCommand;
+import com.notificationplatform.application.observability.NotificationMetrics;
+import com.notificationplatform.application.observability.MdcScope;
+import com.notificationplatform.application.observability.NotificationTracing;
 import com.notificationplatform.application.provider.EmailProvider;
 import com.notificationplatform.application.provider.ProviderPermanentException;
 import com.notificationplatform.application.provider.ProviderSendRequest;
@@ -16,6 +19,7 @@ import com.notificationplatform.domain.model.DeliveryStatus;
 import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.core.Message;
@@ -33,19 +37,28 @@ public class EmailWorker {
     private final EmailProvider emailProvider;
     private final Duration lockDuration;
     private final Duration defaultRetryDelay;
+    private final DeliveryStatus permanentFailureStatus;
+    private final NotificationMetrics metrics;
+    private final NotificationTracing tracing;
 
     public EmailWorker(
         NotificationDeliveryService deliveryService,
         QueuePublisher queuePublisher,
         EmailProvider emailProvider,
+        NotificationMetrics metrics,
+        NotificationTracing tracing,
         @Value("${notification.worker.email.lock-duration:PT5M}") Duration lockDuration,
-        @Value("${notification.rabbitmq.retry-delay:PT1M}") Duration defaultRetryDelay
+        @Value("${notification.rabbitmq.retry-delay:PT1M}") Duration defaultRetryDelay,
+        @Value("${notification.delivery.permanent-failure-status:DEAD_LETTERED}") String permanentFailureStatus
     ) {
         this.deliveryService = deliveryService;
         this.queuePublisher = queuePublisher;
         this.emailProvider = emailProvider;
+        this.metrics = metrics;
+        this.tracing = tracing;
         this.lockDuration = lockDuration;
         this.defaultRetryDelay = defaultRetryDelay;
+        this.permanentFailureStatus = terminalStatus(permanentFailureStatus);
     }
 
     @RabbitListener(
@@ -58,8 +71,12 @@ public class EmailWorker {
     )
     public void consume(DeliveryMessage message, Message rawMessage, com.rabbitmq.client.Channel channel) throws IOException {
         long deliveryTag = rawMessage.getMessageProperties().getDeliveryTag();
-        try {
-            processMessage(message);
+        try (MdcScope ignored = MdcScope.with(Map.of(
+            "notificationRequestId", message.notificationRequestId().toString(),
+            "deliveryId", message.deliveryId().toString()
+        ))) {
+            tracing.observe("rabbitmq.consume", () -> processMessage(message));
+            metrics.incrementRabbitMqMessagesConsumed();
             channel.basicAck(deliveryTag, false);
         } catch (RuntimeException ex) {
             log.error(
@@ -73,6 +90,15 @@ public class EmailWorker {
     }
 
     void processMessage(DeliveryMessage message) {
+        try (MdcScope ignored = MdcScope.with(Map.of(
+            "notificationRequestId", message.notificationRequestId().toString(),
+            "deliveryId", message.deliveryId().toString()
+        ))) {
+            metrics.recordDeliveryProcessing(() -> tracing.observe("email.worker.process", () -> processMessageInternal(message)));
+        }
+    }
+
+    private void processMessageInternal(DeliveryMessage message) {
         log.info(
             "Processing EMAIL delivery message: deliveryId={}, notificationRequestId={}, attemptNumber={}",
             message.deliveryId(),
@@ -93,14 +119,15 @@ public class EmailWorker {
 
         NotificationDelivery delivery = deliveryService.getDeliveryForSending(message.deliveryId());
         try {
-            ProviderSendResult result = emailProvider.send(new ProviderSendRequest(
+            ProviderSendResult result = metrics.recordEmailProviderSend(() -> tracing.observe("email.provider.send", () -> emailProvider.send(new ProviderSendRequest(
                 delivery.getId(),
                 delivery.getChannel(),
                 delivery.getDestination(),
                 delivery.getTemplate().getSubject(),
                 delivery.getTemplate().getContent(),
                 delivery.getNotificationRequest().getPayload()
-            ));
+            ))));
+            metrics.incrementEmailProviderSendSuccess();
 
             deliveryService.recordSuccess(new RecordDeliverySuccessCommand(
                 delivery.getId(),
@@ -109,10 +136,13 @@ public class EmailWorker {
                 result.responsePayload()
             ));
         } catch (ProviderTemporaryException ex) {
+            metrics.incrementEmailProviderSendFailure();
             recordFailureAndPublishFollowUp(delivery, ex.getErrorCode(), ex.getMessage());
         } catch (ProviderPermanentException ex) {
-            recordFailureAndPublishFollowUp(delivery, ex.getErrorCode(), ex.getMessage());
+            metrics.incrementEmailProviderSendFailure();
+            recordPermanentFailureAndPublishFollowUp(delivery, ex.getErrorCode(), ex.getMessage());
         } catch (RuntimeException ex) {
+            metrics.incrementEmailProviderSendFailure();
             recordFailureAndPublishFollowUp(delivery, "PROVIDER_ERROR", ex.getMessage());
         }
     }
@@ -127,6 +157,18 @@ public class EmailWorker {
         if (failedDelivery.getStatus() == DeliveryStatus.RETRY_SCHEDULED) {
             publishRetry(failedDelivery);
         } else if (failedDelivery.getStatus() == DeliveryStatus.DEAD_LETTERED || failedDelivery.getStatus() == DeliveryStatus.DLQ) {
+            publishDeadLetter(failedDelivery);
+        }
+    }
+
+    private void recordPermanentFailureAndPublishFollowUp(NotificationDelivery delivery, String errorCode, String errorMessage) {
+        NotificationDelivery failedDelivery = deliveryService.recordTerminalFailure(new RecordDeliveryFailureCommand(
+            delivery.getId(),
+            errorCode,
+            errorMessage == null ? "Permanent provider send failure" : errorMessage
+        ), permanentFailureStatus);
+
+        if (failedDelivery.getStatus() == DeliveryStatus.DEAD_LETTERED || failedDelivery.getStatus() == DeliveryStatus.DLQ) {
             publishDeadLetter(failedDelivery);
         }
     }
@@ -186,5 +228,15 @@ public class EmailWorker {
         }
         Duration delay = Duration.between(Instant.now(), delivery.getNextAttemptAt());
         return delay.isNegative() || delay.isZero() ? defaultRetryDelay : delay;
+    }
+
+    private static DeliveryStatus terminalStatus(String value) {
+        DeliveryStatus status = DeliveryStatus.valueOf(value == null || value.isBlank()
+            ? DeliveryStatus.DEAD_LETTERED.name()
+            : value.trim().toUpperCase());
+        if (status != DeliveryStatus.FAILED && status != DeliveryStatus.DEAD_LETTERED && status != DeliveryStatus.DLQ) {
+            throw new IllegalArgumentException("Permanent failure status must be FAILED, DEAD_LETTERED, or DLQ");
+        }
+        return status;
     }
 }

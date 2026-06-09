@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
+import com.notificationplatform.application.cache.NotificationCacheService;
 import com.notificationplatform.application.common.ConflictException;
 import com.notificationplatform.application.common.ResourceNotFoundException;
 import com.notificationplatform.domain.entity.NotificationTemplate;
@@ -33,6 +34,9 @@ class TemplateManagementServiceTest {
 
     @Mock
     private NotificationTemplateRepository templateRepository;
+
+    @Mock
+    private NotificationCacheService cacheService;
 
     @InjectMocks
     private TemplateManagementService service;
