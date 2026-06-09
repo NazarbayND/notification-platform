@@ -1,5 +1,8 @@
 package com.notificationplatform.application.outbox;
 
+import com.notificationplatform.application.observability.NotificationMetrics;
+import com.notificationplatform.application.observability.MdcScope;
+import com.notificationplatform.application.observability.NotificationTracing;
 import com.notificationplatform.application.queue.DeliveryMessage;
 import com.notificationplatform.application.queue.QueuePublisher;
 import com.notificationplatform.domain.entity.NotificationDelivery;
@@ -13,21 +16,24 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @Component
 public class OutboxPublisher {
 
-    private static final int DEFAULT_BATCH_SIZE = 100;
+    private static final Logger log = LoggerFactory.getLogger(OutboxPublisher.class);
+    private static final int DEFAULT_BATCH_SIZE = 1_000;
 
     private final OutboxEventRepository outboxEventRepository;
     private final NotificationDeliveryRepository deliveryRepository;
@@ -35,6 +41,8 @@ public class OutboxPublisher {
     private final TransactionTemplate transactionTemplate;
     private final Clock clock;
     private final int batchSize;
+    private final NotificationMetrics metrics;
+    private final NotificationTracing tracing;
 
     @Autowired
     public OutboxPublisher(
@@ -42,7 +50,9 @@ public class OutboxPublisher {
         NotificationDeliveryRepository deliveryRepository,
         QueuePublisher queuePublisher,
         TransactionTemplate transactionTemplate,
-        @Value("${notification.outbox.publisher.batch-size:100}") int batchSize
+        NotificationMetrics metrics,
+        NotificationTracing tracing,
+        @Value("${outbox.publisher.batch-size:${notification.outbox.publisher.batch-size:1000}}") int batchSize
     ) {
         this(
             outboxEventRepository,
@@ -50,7 +60,9 @@ public class OutboxPublisher {
             queuePublisher,
             transactionTemplate,
             Clock.systemUTC(),
-            batchSize
+            batchSize,
+            metrics,
+            tracing
         );
     }
 
@@ -60,7 +72,9 @@ public class OutboxPublisher {
         QueuePublisher queuePublisher,
         TransactionTemplate transactionTemplate,
         Clock clock,
-        int batchSize
+        int batchSize,
+        NotificationMetrics metrics,
+        NotificationTracing tracing
     ) {
         this.outboxEventRepository = outboxEventRepository;
         this.deliveryRepository = deliveryRepository;
@@ -68,26 +82,85 @@ public class OutboxPublisher {
         this.transactionTemplate = transactionTemplate;
         this.clock = clock;
         this.batchSize = batchSize <= 0 ? DEFAULT_BATCH_SIZE : batchSize;
+        this.metrics = metrics;
+        this.tracing = tracing;
     }
 
-    @Scheduled(fixedDelayString = "${notification.outbox.publisher.fixed-delay:PT5S}")
+    @Scheduled(fixedDelayString = "${outbox.publisher.fixed-delay-ms:${notification.outbox.publisher.fixed-delay-ms:100}}")
     public void publishPendingEvents() {
-        List<UUID> eventIds = outboxEventRepository.findAvailableEvents(
-                OutboxEventStatus.PENDING,
-                Instant.now(clock),
-                PageRequest.of(0, batchSize)
-            )
-            .stream()
-            .map(OutboxEvent::getId)
-            .toList();
-
-        for (UUID eventId : eventIds) {
-            publishEvent(eventId);
+        BatchPublishResult result = publishBatch();
+        if (result.fetchedCount() > 0) {
+            log.info(
+                "Outbox publish batch completed: fetched={}, durationMs={}, rowsMarkedPublished={}, failed={}",
+                result.fetchedCount(),
+                result.duration().toMillis(),
+                result.publishedCount(),
+                result.failedCount()
+            );
         }
     }
 
+    BatchPublishResult publishBatch() {
+        long startedAtNanos = System.nanoTime();
+        BatchPublishResult result = metrics.recordOutboxPublish(() -> tracing.observe("outbox.publish.batch", () ->
+            transactionTemplate.execute(status -> publishLockedBatch())
+        ));
+        BatchPublishResult safeResult = result == null ? BatchPublishResult.empty() : result;
+        return safeResult.withDuration(Duration.ofNanos(System.nanoTime() - startedAtNanos));
+    }
+
+    private BatchPublishResult publishLockedBatch() {
+        Instant now = Instant.now(clock);
+        List<OutboxEvent> events = outboxEventRepository.findReadyPendingEventsForPublishing(now, batchSize);
+        metrics.recordOutboxPublishBatchSize(events.size());
+        recordPublishLag(now, events);
+
+        if (events.isEmpty()) {
+            return BatchPublishResult.empty();
+        }
+
+        log.info("Outbox publish batch fetched: batchSize={}", events.size());
+
+        Map<UUID, NotificationDelivery> deliveriesById = findDeliveriesById(events);
+        List<UUID> publishedEventIds = new ArrayList<>();
+        List<OutboxEvent> failedEvents = new ArrayList<>();
+
+        for (OutboxEvent event : events) {
+            try (MdcScope ignored = MdcScope.with(Map.of("outboxEventId", event.getId().toString()))) {
+                try {
+                    publishDeliveryMessages(event, deliveriesById);
+                    publishedEventIds.add(event.getId());
+                } catch (RuntimeException ex) {
+                    scheduleRetry(event, ex);
+                    failedEvents.add(event);
+                    metrics.incrementOutboxEventsFailed();
+                }
+            }
+        }
+
+        if (!failedEvents.isEmpty()) {
+            outboxEventRepository.saveAll(failedEvents);
+        }
+
+        int rowsMarkedPublished = 0;
+        if (!publishedEventIds.isEmpty()) {
+            rowsMarkedPublished = outboxEventRepository.markEventsPublished(
+                publishedEventIds,
+                OutboxEventStatus.PUBLISHED,
+                OutboxEventStatus.PENDING,
+                Instant.now(clock)
+            );
+            for (int index = 0; index < rowsMarkedPublished; index++) {
+                metrics.incrementOutboxEventsPublished();
+            }
+        }
+
+        return new BatchPublishResult(events.size(), rowsMarkedPublished, failedEvents.size(), Duration.ZERO);
+    }
+
     void publishEvent(UUID eventId) {
-        transactionTemplate.executeWithoutResult(status -> {
+        try (MdcScope ignored = MdcScope.with(Map.of("outboxEventId", eventId.toString()))) {
+            metrics.recordOutboxPublish(() -> tracing.observe("outbox.publish", Map.of("outbox.event.id", eventId.toString()), () -> transactionTemplate.executeWithoutResult(status -> {
             OutboxEvent event = outboxEventRepository.findByIdForUpdate(eventId)
                 .orElse(null);
             if (event == null || !isReady(event)) {
@@ -99,22 +172,30 @@ public class OutboxPublisher {
                 event.setStatus(OutboxEventStatus.PUBLISHED);
                 event.setPublishedAt(Instant.now(clock));
                 event.setLastError(null);
+                metrics.incrementOutboxEventsPublished();
             } catch (RuntimeException ex) {
-                event.setAttemptCount(event.getAttemptCount() + 1);
-                event.setAvailableAt(Instant.now(clock).plus(backoffForAttempt(event.getAttemptCount())));
-                event.setLastError(trimToNull(ex.getMessage()));
+                scheduleRetry(event, ex);
+                metrics.incrementOutboxEventsFailed();
             }
             outboxEventRepository.save(event);
-        });
+            })));
+        }
     }
 
     private void publishDeliveryMessages(OutboxEvent event) {
+        publishDeliveryMessages(event, Map.of());
+    }
+
+    private void publishDeliveryMessages(OutboxEvent event, Map<UUID, NotificationDelivery> deliveriesById) {
         NotificationPriority priority = parsePriority(event.getPayload().get("priority"));
         UUID notificationRequestId = parseUuid(event.getPayload().get("notificationRequestId"));
 
         for (UUID deliveryId : parseDeliveryIds(event.getPayload())) {
-            NotificationDelivery delivery = deliveryRepository.findByIdWithRequestAndTemplate(deliveryId)
-                .orElseThrow(() -> new IllegalStateException("Notification delivery not found: " + deliveryId));
+            NotificationDelivery delivery = deliveriesById.get(deliveryId);
+            if (delivery == null) {
+                delivery = deliveryRepository.findByIdWithRequestAndTemplate(deliveryId)
+                    .orElseThrow(() -> new IllegalStateException("Notification delivery not found: " + deliveryId));
+            }
             UUID requestId = notificationRequestId == null
                 ? delivery.getNotificationRequest().getId()
                 : notificationRequestId;
@@ -130,6 +211,41 @@ public class OutboxPublisher {
                 )
             );
         }
+    }
+
+    private Map<UUID, NotificationDelivery> findDeliveriesById(List<OutboxEvent> events) {
+        List<UUID> deliveryIds = events.stream()
+            .map(OutboxEvent::getPayload)
+            .map(OutboxPublisher::parseDeliveryIds)
+            .flatMap(Collection::stream)
+            .distinct()
+            .toList();
+        if (deliveryIds.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<UUID, NotificationDelivery> deliveriesById = new HashMap<>();
+        deliveryRepository.findAllByIdInWithRequestAndTemplate(deliveryIds)
+            .forEach(delivery -> deliveriesById.put(delivery.getId(), delivery));
+        return deliveriesById;
+    }
+
+    private void scheduleRetry(OutboxEvent event, RuntimeException ex) {
+        event.setAttemptCount(event.getAttemptCount() + 1);
+        event.setAvailableAt(Instant.now(clock).plus(backoffForAttempt(event.getAttemptCount())));
+        event.setLastError(trimToNull(ex.getMessage()));
+    }
+
+    private void recordPublishLag(Instant now, List<OutboxEvent> events) {
+        double lagSeconds = events.stream()
+            .map(OutboxEvent::getCreatedAt)
+            .filter(Objects::nonNull)
+            .min(Instant::compareTo)
+            .map(oldestCreatedAt -> Duration.between(oldestCreatedAt, now))
+            .map(Duration::toMillis)
+            .map(milliseconds -> milliseconds / 1000.0)
+            .orElse(0.0);
+        metrics.recordOutboxPublishLagSeconds(lagSeconds);
     }
 
     private boolean isReady(OutboxEvent event) {
@@ -182,5 +298,16 @@ public class OutboxPublisher {
             return null;
         }
         return value.trim();
+    }
+
+    record BatchPublishResult(int fetchedCount, int publishedCount, int failedCount, Duration duration) {
+
+        static BatchPublishResult empty() {
+            return new BatchPublishResult(0, 0, 0, Duration.ZERO);
+        }
+
+        BatchPublishResult withDuration(Duration duration) {
+            return new BatchPublishResult(fetchedCount, publishedCount, failedCount, duration);
+        }
     }
 }

@@ -47,6 +47,14 @@ public interface NotificationDeliveryRepository extends JpaRepository<Notificati
     @Query("""
         select delivery
         from NotificationDelivery delivery
+        where delivery.id in :deliveryIds
+        """)
+    List<NotificationDelivery> findAllByIdInWithRequestAndTemplate(@Param("deliveryIds") Collection<UUID> deliveryIds);
+
+    @EntityGraph(attributePaths = {"notificationRequest", "template"})
+    @Query("""
+        select delivery
+        from NotificationDelivery delivery
         where delivery.status in :statuses
           and (delivery.nextAttemptAt is null or delivery.nextAttemptAt <= :now)
           and (delivery.expiresAt is null or delivery.expiresAt > :now)

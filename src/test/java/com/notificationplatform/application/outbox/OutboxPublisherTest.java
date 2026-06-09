@@ -2,10 +2,15 @@ package com.notificationplatform.application.outbox;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.notificationplatform.application.observability.NotificationMetrics;
+import com.notificationplatform.application.observability.NotificationTracing;
 import com.notificationplatform.application.queue.DeliveryMessage;
 import com.notificationplatform.application.queue.QueuePublisher;
 import com.notificationplatform.domain.entity.NotificationDelivery;
@@ -25,6 +30,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import io.micrometer.observation.ObservationRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -94,6 +101,36 @@ class OutboxPublisherTest {
         assertThat(event.getLastError()).isEqualTo("queue unavailable");
     }
 
+    @Test
+    void publishPendingEventsPublishesLockedBatchAndMarksPublishedInBulk() {
+        NotificationDelivery firstDelivery = delivery();
+        NotificationDelivery secondDelivery = delivery();
+        OutboxEvent firstEvent = event(firstDelivery.getNotificationRequest().getId(), firstDelivery.getId());
+        OutboxEvent secondEvent = event(secondDelivery.getNotificationRequest().getId(), secondDelivery.getId());
+        OutboxPublisher publisher = publisher();
+
+        when(outboxEventRepository.findReadyPendingEventsForPublishing(NOW, 100))
+            .thenReturn(List.of(firstEvent, secondEvent));
+        when(deliveryRepository.findAllByIdInWithRequestAndTemplate(any()))
+            .thenReturn(List.of(firstDelivery, secondDelivery));
+        when(outboxEventRepository.markEventsPublished(
+            anyList(),
+            eq(OutboxEventStatus.PUBLISHED),
+            eq(OutboxEventStatus.PENDING),
+            any(Instant.class)
+        )).thenReturn(2);
+
+        publisher.publishPendingEvents();
+
+        verify(queuePublisher, times(2)).publish(eq(NotificationPriority.HIGH), any(DeliveryMessage.class));
+        verify(outboxEventRepository).markEventsPublished(
+            org.mockito.ArgumentMatchers.argThat(ids -> ids.containsAll(List.of(firstEvent.getId(), secondEvent.getId()))),
+            eq(OutboxEventStatus.PUBLISHED),
+            eq(OutboxEventStatus.PENDING),
+            any(Instant.class)
+        );
+    }
+
     private OutboxPublisher publisher() {
         return new OutboxPublisher(
             outboxEventRepository,
@@ -101,7 +138,9 @@ class OutboxPublisherTest {
             queuePublisher,
             new TransactionTemplate(new NoOpTransactionManager()),
             Clock.fixed(NOW, ZoneOffset.UTC),
-            100
+            100,
+            new NotificationMetrics(new SimpleMeterRegistry()),
+            new NotificationTracing(ObservationRegistry.create())
         );
     }
 
@@ -117,6 +156,7 @@ class OutboxPublisherTest {
             )
         );
         ReflectionTestUtils.setField(event, "id", UUID.randomUUID());
+        ReflectionTestUtils.setField(event, "createdAt", NOW.minusSeconds(5));
         event.setAvailableAt(NOW);
         return event;
     }
