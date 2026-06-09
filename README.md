@@ -37,7 +37,13 @@ Not implemented yet:
 - Spring Data JPA
 - PostgreSQL
 - RabbitMQ
+- Redis
 - MailHog
+- Spring Boot Actuator
+- Micrometer / Prometheus
+- Grafana
+- OpenTelemetry Collector
+- Jaeger
 - Flyway
 - Spring Mail
 - Bean Validation
@@ -126,7 +132,17 @@ RABBITMQ_HOST=localhost
 RABBITMQ_PORT=5672
 RABBITMQ_USERNAME=notification
 RABBITMQ_PASSWORD=notification
+REDIS_HOST=localhost
+REDIS_PORT=6379
 NOTIFICATION_EMAIL_FROM=no-reply@notification-platform.local
+NOTIFICATION_EMAIL_FAILURE_MODE=SUCCESS
+NOTIFICATION_EMAIL_TIMEOUT_DURATION=PT2S
+NOTIFICATION_PERMANENT_FAILURE_STATUS=DEAD_LETTERED
+NOTIFICATION_TEMPLATE_CACHE_TTL=PT10M
+NOTIFICATION_PREFERENCE_CACHE_TTL=PT10M
+NOTIFICATION_IDEMPOTENCY_CACHE_TTL=PT30M
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318/v1/traces
+OTEL_TRACES_SAMPLER_PROBABILITY=1.0
 ```
 
 Hibernate is configured with `ddl-auto: validate`; Flyway owns schema creation.
@@ -139,7 +155,7 @@ SPRING_PROFILES_ACTIVE=local mvn spring-boot:run
 
 ## Local Infrastructure
 
-Start PostgreSQL, RabbitMQ, and MailHog:
+Start PostgreSQL, RabbitMQ, Redis, MailHog, OpenTelemetry Collector, Jaeger, Prometheus, and Grafana:
 
 ```bash
 docker compose up -d
@@ -150,6 +166,7 @@ RabbitMQ endpoints:
 ```text
 AMQP: localhost:5672
 Management UI: http://localhost:15672
+Prometheus metrics: http://localhost:15692/metrics
 Username: notification
 Password: notification
 ```
@@ -160,6 +177,80 @@ MailHog endpoints:
 SMTP: localhost:1025
 Web UI: http://localhost:8025
 ```
+
+Redis endpoint:
+
+```text
+Redis: localhost:6379
+```
+
+Observability endpoints:
+
+```text
+Backend health: http://localhost:8080/actuator/health
+Backend Prometheus metrics: http://localhost:8080/actuator/prometheus
+Prometheus: http://localhost:9090
+Grafana: http://localhost:3001
+Grafana login: admin / admin
+OpenTelemetry Collector OTLP/gRPC: localhost:4317
+OpenTelemetry Collector OTLP/HTTP: localhost:4318
+Jaeger UI: http://localhost:16686
+```
+
+Prometheus is configured in `observability/prometheus/prometheus.yml`. It scrapes the backend at `host.docker.internal:8080/actuator/prometheus` so the Spring Boot app can keep running locally with `mvn spring-boot:run`, and it also scrapes RabbitMQ metrics on `rabbitmq:15692` after enabling the RabbitMQ Prometheus plugin.
+
+OpenTelemetry Collector is configured in `observability/otel-collector/config.yml`. The backend exports traces to the collector through OTLP HTTP by default, and the collector forwards traces to Jaeger. Important notification, idempotency, persistence, outbox, RabbitMQ, worker, and provider flows have custom observations in addition to normal Spring HTTP/server spans.
+
+Redis is used only as an optimization. PostgreSQL remains the source of truth. The current Redis-backed foundation caches active template IDs, user preference booleans, and idempotent notification request IDs; it also includes a reusable rate-limiter component that is not enforced on endpoints yet.
+
+Grafana provisioning lives under `observability/grafana/provisioning`. The Prometheus datasource is created automatically, a starter `Notification Platform` dashboard is provisioned for day-to-day visibility, and a `Notification Platform Stress` dashboard is provisioned for load tests with panels for notifications/sec, notification latency, delivery success/failure/retry/dead-letter rates, RabbitMQ queue depth, outbox pending count, worker throughput, and Redis cache hit ratio.
+
+Metric names use Micrometer conventions in code and are exported to Prometheus with the expected underscore names, for example:
+
+```text
+notifications_created_total
+notification_batches_created_total
+outbox_events_created_total
+outbox_events_published_total
+outbox_events_failed_total
+delivery_attempts_total
+deliveries_sent_total
+deliveries_failed_total
+deliveries_dead_lettered_total
+rabbitmq_messages_published_total
+rabbitmq_messages_consumed_total
+email_provider_send_success_total
+email_provider_send_failure_total
+redis_cache_hit_total
+redis_cache_miss_total
+redis_cache_eviction_total
+outbox_pending_count
+deliveries_pending_count
+deliveries_retry_scheduled_count
+deliveries_dead_lettered_count
+notification_create_duration_seconds
+outbox_publish_duration_seconds
+delivery_processing_duration_seconds
+email_provider_send_duration_seconds
+```
+
+## Stress Testing
+
+k6 load tests live in `tests/load`.
+
+Run the smoke test:
+
+```bash
+k6 run tests/load/smoke.js
+```
+
+Run the 100 VU notification throughput test:
+
+```bash
+k6 run tests/load/notifications.js
+```
+
+Run batch, spike, soak, provider-failure, and worker-recovery scenarios from the same directory. The complete guide, expected metrics, failure-mode setup, worker recovery procedure, and PromQL examples are in `tests/load/README.md`.
 
 The application declares a durable direct exchange:
 
