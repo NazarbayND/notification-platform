@@ -118,8 +118,9 @@ public class EmailWorker {
         }
 
         NotificationDelivery delivery = deliveryService.getDeliveryForSending(message.deliveryId());
+        ProviderSendResult result;
         try {
-            ProviderSendResult result = metrics.recordEmailProviderSend(() -> tracing.observe("email.provider.send", () -> emailProvider.send(new ProviderSendRequest(
+            result = metrics.recordEmailProviderSend(() -> tracing.observe("email.provider.send", () -> emailProvider.send(new ProviderSendRequest(
                 delivery.getId(),
                 delivery.getChannel(),
                 delivery.getDestination(),
@@ -128,23 +129,26 @@ public class EmailWorker {
                 delivery.getNotificationRequest().getPayload()
             ))));
             metrics.incrementEmailProviderSendSuccess();
-
-            deliveryService.recordSuccess(new RecordDeliverySuccessCommand(
-                delivery.getId(),
-                result.provider(),
-                result.providerMessageId(),
-                result.responsePayload()
-            ));
         } catch (ProviderTemporaryException ex) {
             metrics.incrementEmailProviderSendFailure();
             recordFailureAndPublishFollowUp(delivery, ex.getErrorCode(), ex.getMessage());
+            return;
         } catch (ProviderPermanentException ex) {
             metrics.incrementEmailProviderSendFailure();
             recordPermanentFailureAndPublishFollowUp(delivery, ex.getErrorCode(), ex.getMessage());
+            return;
         } catch (RuntimeException ex) {
             metrics.incrementEmailProviderSendFailure();
             recordFailureAndPublishFollowUp(delivery, "PROVIDER_ERROR", ex.getMessage());
+            return;
         }
+
+        deliveryService.recordSuccess(new RecordDeliverySuccessCommand(
+            delivery.getId(),
+            result.provider(),
+            result.providerMessageId(),
+            result.responsePayload()
+        ));
     }
 
     private void recordFailureAndPublishFollowUp(NotificationDelivery delivery, String errorCode, String errorMessage) {

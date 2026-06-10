@@ -84,6 +84,27 @@ class NotificationDeliveryServiceTest {
     }
 
     @Test
+    void markSendingReclaimsExpiredSendingLockAndCreatesNextAttempt() {
+        NotificationDelivery delivery = deliveryWithAttemptCount(1, 3);
+        delivery.setStatus(DeliveryStatus.SENDING);
+        delivery.setLockedUntil(NOW.minusSeconds(1));
+        NotificationDeliveryService service = service();
+
+        when(deliveryRepository.findByIdForUpdate(delivery.getId())).thenReturn(Optional.of(delivery));
+        when(deliveryRepository.save(any(NotificationDelivery.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        NotificationDelivery result = service.markSending(delivery.getId(), null);
+
+        ArgumentCaptor<DeliveryAttempt> attemptCaptor = ArgumentCaptor.forClass(DeliveryAttempt.class);
+        verify(deliveryAttemptRepository).save(attemptCaptor.capture());
+
+        assertThat(result.getStatus()).isEqualTo(DeliveryStatus.SENDING);
+        assertThat(result.getAttemptCount()).isEqualTo(2);
+        assertThat(result.getLockedUntil()).isEqualTo(NOW.plusSeconds(300));
+        assertThat(attemptCaptor.getValue().getAttemptNumber()).isEqualTo(2);
+    }
+
+    @Test
     void recordFailureSchedulesRetryBeforeMaxAttempts() {
         NotificationDelivery delivery = deliveryWithAttemptCount(1, 3);
         NotificationDeliveryService service = service();

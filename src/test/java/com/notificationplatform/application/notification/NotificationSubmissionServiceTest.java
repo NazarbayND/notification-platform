@@ -1,6 +1,7 @@
 package com.notificationplatform.application.notification;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -19,6 +20,7 @@ import com.notificationplatform.domain.model.Channel;
 import com.notificationplatform.domain.model.DeliveryStatus;
 import com.notificationplatform.domain.model.NotificationPriority;
 import com.notificationplatform.domain.model.NotificationRequestStatus;
+import com.notificationplatform.domain.model.ProductStatus;
 import com.notificationplatform.domain.model.TemplateStatus;
 import com.notificationplatform.domain.repository.NotificationBatchRepository;
 import com.notificationplatform.domain.repository.NotificationDeliveryRepository;
@@ -175,6 +177,46 @@ class NotificationSubmissionServiceTest {
 
         assertThat(request.getStatus()).isEqualTo(NotificationRequestStatus.SKIPPED);
         assertThat(outboxCaptor.getValue().getEventType()).isEqualTo("NotificationSkipped");
+    }
+
+    @Test
+    void createNotificationRejectsUnsupportedChannelBeforeLoadingProduct() {
+        UUID productId = UUID.randomUUID();
+
+        assertThatThrownBy(() -> service.createNotification(new CreateNotificationCommand(
+            productId,
+            "invoice.created",
+            List.of(Channel.SMS),
+            "user-1",
+            "idem-1",
+            "invoice",
+            NotificationPriority.HIGH,
+            Map.of("name", "Ada"),
+            Map.of("phone", "+15555550100"),
+            null
+        )))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Unsupported delivery channel");
+
+        verify(productRepository, never()).findById(productId);
+        verify(requestRepository, never()).findByProduct_IdAndIdempotencyKey(productId, "idem-1");
+    }
+
+    @Test
+    void createNotificationRejectsDisabledProductBeforeCreatingDelivery() {
+        UUID productId = UUID.randomUUID();
+        Product product = new Product("Billing");
+        product.setStatus(ProductStatus.DISABLED);
+        ReflectionTestUtils.setField(product, "id", productId);
+
+        when(productRepository.findById(productId)).thenReturn(Optional.of(product));
+
+        assertThatThrownBy(() -> service.createNotification(command(productId)))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Product is not active");
+
+        verify(deliveryRepository, never()).save(any(NotificationDelivery.class));
+        verify(outboxEventRepository, never()).save(any(OutboxEvent.class));
     }
 
     private static CreateNotificationCommand command(UUID productId) {

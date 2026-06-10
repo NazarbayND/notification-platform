@@ -103,6 +103,7 @@ public class RabbitMqTopology {
     RabbitTemplate rabbitTemplate(ConnectionFactory connectionFactory, MessageConverter rabbitMessageConverter) {
         RabbitTemplate rabbitTemplate = new RabbitTemplate(connectionFactory);
         rabbitTemplate.setMessageConverter(rabbitMessageConverter);
+        rabbitTemplate.setMandatory(true);
         return rabbitTemplate;
     }
 

@@ -1,5 +1,6 @@
 package com.notificationplatform.application.worker;
 
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
@@ -16,6 +17,7 @@ import com.notificationplatform.application.observability.NotificationTracing;
 import com.notificationplatform.application.provider.EmailProvider;
 import com.notificationplatform.application.provider.MailHogEmailProvider;
 import com.notificationplatform.application.provider.ProviderPermanentException;
+import com.notificationplatform.application.provider.ProviderSendResult;
 import com.notificationplatform.application.provider.ProviderTemporaryException;
 import com.notificationplatform.application.queue.DeliveryMessage;
 import com.notificationplatform.application.queue.QueuePublisher;
@@ -182,6 +184,32 @@ class EmailWorkerTest {
         verify(emailProvider, never()).send(any());
         verify(deliveryService, never()).recordSuccess(any(RecordDeliverySuccessCommand.class));
         verify(deliveryService, never()).recordFailure(any(RecordDeliveryFailureCommand.class));
+    }
+
+    @Test
+    void successRecordingFailureDoesNotScheduleProviderRetry() {
+        NotificationDelivery delivery = delivery(DeliveryStatus.SENDING, 1, 3);
+        EmailWorker worker = worker(emailProvider);
+
+        when(deliveryService.markSending(delivery.getId(), Duration.ofMinutes(5))).thenReturn(delivery);
+        when(deliveryService.getDeliveryForSending(delivery.getId())).thenReturn(delivery);
+        when(emailProvider.send(any())).thenReturn(new ProviderSendResult(
+            "provider",
+            "provider-message-1",
+            Map.of("accepted", true)
+        ));
+        doThrow(new IllegalStateException("database unavailable"))
+            .when(deliveryService)
+            .recordSuccess(any(RecordDeliverySuccessCommand.class));
+
+        assertThatThrownBy(() -> worker.processMessage(message(delivery, 1)))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("database unavailable");
+
+        verify(deliveryService, never()).recordFailure(any(RecordDeliveryFailureCommand.class));
+        verify(deliveryService, never()).recordTerminalFailure(any(RecordDeliveryFailureCommand.class), any(DeliveryStatus.class));
+        verify(queuePublisher, never()).publishRetry(any(DeliveryMessage.class), any(Duration.class));
+        verify(queuePublisher, never()).publishDeadLetter(any(DeliveryMessage.class));
     }
 
     private EmailWorker worker(EmailProvider provider) {

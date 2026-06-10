@@ -1,7 +1,10 @@
 package com.notificationplatform.application.queue;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.verify;
 
 import com.notificationplatform.application.observability.NotificationMetrics;
@@ -21,6 +24,7 @@ import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageDeliveryMode;
 import org.springframework.amqp.core.MessagePostProcessor;
 import org.springframework.amqp.core.MessageProperties;
+import org.springframework.amqp.rabbit.core.RabbitOperations;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 
 @ExtendWith(MockitoExtension.class)
@@ -47,6 +51,7 @@ class RabbitMqQueuePublisherTest {
         Message processedMessage = postProcessorCaptor.getValue().postProcessMessage(new Message(new byte[0], new MessageProperties()));
         assertThat(processedMessage.getMessageProperties().getDeliveryMode()).isEqualTo(MessageDeliveryMode.PERSISTENT);
         assertThat(processedMessage.getMessageProperties().getExpiration()).isNull();
+        verify(rabbitTemplate).waitForConfirmsOrDie(5000L);
     }
 
     @Test
@@ -67,6 +72,7 @@ class RabbitMqQueuePublisherTest {
         Message processedMessage = postProcessorCaptor.getValue().postProcessMessage(new Message(new byte[0], new MessageProperties()));
         assertThat(processedMessage.getMessageProperties().getDeliveryMode()).isEqualTo(MessageDeliveryMode.PERSISTENT);
         assertThat(processedMessage.getMessageProperties().getExpiration()).isEqualTo("120000");
+        verify(rabbitTemplate).waitForConfirmsOrDie(5000L);
     }
 
     @Test
@@ -86,15 +92,26 @@ class RabbitMqQueuePublisherTest {
 
         Message processedMessage = postProcessorCaptor.getValue().postProcessMessage(new Message(new byte[0], new MessageProperties()));
         assertThat(processedMessage.getMessageProperties().getDeliveryMode()).isEqualTo(MessageDeliveryMode.PERSISTENT);
+        verify(rabbitTemplate).waitForConfirmsOrDie(5000L);
     }
 
     private RabbitMqQueuePublisher publisher() {
+        executeRabbitInvokeCallbacks();
         return new RabbitMqQueuePublisher(
             rabbitTemplate,
             RabbitMqTopology.EXCHANGE,
+            Duration.ofSeconds(5),
             new NotificationMetrics(new SimpleMeterRegistry()),
             new NotificationTracing(ObservationRegistry.create())
         );
+    }
+
+    @SuppressWarnings("unchecked")
+    private void executeRabbitInvokeCallbacks() {
+        doAnswer(invocation -> {
+            RabbitOperations.OperationsCallback<Object> callback = invocation.getArgument(0);
+            return callback.doInRabbit(rabbitTemplate);
+        }).when(rabbitTemplate).invoke(any(RabbitOperations.OperationsCallback.class), isNull(), isNull());
     }
 
     private static DeliveryMessage message(NotificationPriority priority) {

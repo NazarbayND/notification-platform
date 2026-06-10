@@ -16,6 +16,7 @@ import com.notificationplatform.domain.model.Channel;
 import com.notificationplatform.domain.model.DeliveryStatus;
 import com.notificationplatform.domain.model.NotificationPriority;
 import com.notificationplatform.domain.model.NotificationRequestStatus;
+import com.notificationplatform.domain.model.ProductStatus;
 import com.notificationplatform.domain.model.TemplateStatus;
 import com.notificationplatform.domain.repository.NotificationBatchRepository;
 import com.notificationplatform.domain.repository.NotificationDeliveryRepository;
@@ -48,6 +49,7 @@ public class NotificationSubmissionService {
     private static final String AGGREGATE_NOTIFICATION_REQUEST = "NOTIFICATION_REQUEST";
     private static final String EVENT_NOTIFICATION_ACCEPTED = "NotificationAccepted";
     private static final String EVENT_NOTIFICATION_SKIPPED = "NotificationSkipped";
+    private static final Set<Channel> SUPPORTED_DELIVERY_CHANNELS = Set.of(Channel.EMAIL);
 
     private final ProductRepository productRepository;
     private final NotificationTemplateRepository templateRepository;
@@ -89,7 +91,7 @@ public class NotificationSubmissionService {
         return metrics.recordNotificationCreate(() -> {
             Objects.requireNonNull(command, "Create notification command is required");
             Objects.requireNonNull(command.productId(), "Product id is required");
-            normalizeRequestedChannels(command.requestedChannels());
+            ensureSupportedChannels(normalizeRequestedChannels(command.requestedChannels()));
             String idempotencyKey = normalizeRequired(command.idempotencyKey(), "Idempotency key is required");
 
             return tracing.observe("notification.idempotency.check", () ->
@@ -107,6 +109,9 @@ public class NotificationSubmissionService {
         List<BatchNotificationItem> items = Objects.requireNonNull(command.items(), "Batch items are required");
         if (items.isEmpty()) {
             throw new IllegalArgumentException("Batch must contain at least one notification");
+        }
+        for (BatchNotificationItem item : items) {
+            ensureSupportedChannels(normalizeRequestedChannels(item.requestedChannels()));
         }
 
         return batchRepository.findByProduct_IdAndIdempotencyKey(command.productId(), idempotencyKey)
@@ -174,6 +179,7 @@ public class NotificationSubmissionService {
     ) {
         Product product = productRepository.findById(command.productId())
             .orElseThrow(() -> new ResourceNotFoundException("Product not found: " + command.productId()));
+        ensureProductCanSend(product);
 
         NotificationBatch batch = new NotificationBatch(product, idempotencyKey, items.size());
         batch.setStatus(BatchStatus.PROCESSING);
@@ -242,6 +248,7 @@ public class NotificationSubmissionService {
     private NotificationRequest createNotification(CreateNotificationCommand command, NotificationBatch batch) {
         Objects.requireNonNull(command.productId(), "Product id is required");
         List<Channel> requestedChannels = normalizeRequestedChannels(command.requestedChannels());
+        ensureSupportedChannels(requestedChannels);
         String templateKey = normalizeRequired(command.templateKey(), "Template key is required");
         String externalUserId = normalizeRequired(command.externalUserId(), "External user id is required");
         String idempotencyKey = normalizeRequired(command.idempotencyKey(), "Idempotency key is required");
@@ -257,6 +264,7 @@ public class NotificationSubmissionService {
 
         Product product = productRepository.findById(command.productId())
             .orElseThrow(() -> new ResourceNotFoundException("Product not found: " + command.productId()));
+        ensureProductCanSend(product);
 
         NotificationRequest request = new NotificationRequest(product, templateKey, externalUserId, idempotencyKey, category);
         request.setBatch(batch);
@@ -423,6 +431,20 @@ public class NotificationSubmissionService {
             uniqueChannels.add(Objects.requireNonNull(channel, "Requested channel is required"));
         }
         return List.copyOf(uniqueChannels);
+    }
+
+    private static void ensureProductCanSend(Product product) {
+        if (product.getStatus() != ProductStatus.ACTIVE) {
+            throw new IllegalArgumentException("Product is not active: " + product.getId());
+        }
+    }
+
+    private static void ensureSupportedChannels(List<Channel> requestedChannels) {
+        for (Channel channel : requestedChannels) {
+            if (!SUPPORTED_DELIVERY_CHANNELS.contains(channel)) {
+                throw new IllegalArgumentException("Unsupported delivery channel: " + channel);
+            }
+        }
     }
 
     private static boolean isExpired(Instant expiresAt) {

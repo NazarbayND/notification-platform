@@ -16,51 +16,52 @@ public class RabbitMqQueuePublisher implements QueuePublisher {
 
     private final RabbitTemplate rabbitTemplate;
     private final String exchangeName;
+    private final Duration publisherConfirmTimeout;
     private final NotificationMetrics metrics;
     private final NotificationTracing tracing;
 
     public RabbitMqQueuePublisher(
         RabbitTemplate rabbitTemplate,
         @Value("${notification.rabbitmq.exchange:" + RabbitMqTopology.EXCHANGE + "}") String exchangeName,
+        @Value("${notification.rabbitmq.publisher-confirm-timeout:PT5S}") Duration publisherConfirmTimeout,
         NotificationMetrics metrics,
         NotificationTracing tracing
     ) {
         this.rabbitTemplate = rabbitTemplate;
         this.exchangeName = exchangeName;
+        this.publisherConfirmTimeout = publisherConfirmTimeout == null || publisherConfirmTimeout.isNegative() || publisherConfirmTimeout.isZero()
+            ? Duration.ofSeconds(5)
+            : publisherConfirmTimeout;
         this.metrics = metrics;
         this.tracing = tracing;
     }
 
     @Override
     public void publish(NotificationPriority priority, DeliveryMessage message) {
-        tracing.observe("rabbitmq.publish", () -> rabbitTemplate.convertAndSend(
-            exchangeName,
-            routingKeyFor(priority, message.channel()),
-            message,
-            persistentMessage()
-        ));
-        metrics.incrementRabbitMqMessagesPublished();
+        publishWithConfirm("rabbitmq.publish", routingKeyFor(priority, message.channel()), message, persistentMessage());
     }
 
     @Override
     public void publishRetry(DeliveryMessage message, Duration delay) {
-        tracing.observe("rabbitmq.publish.retry", () -> rabbitTemplate.convertAndSend(
-            exchangeName,
-            RabbitMqTopology.RETRY_EMAIL_ROUTING_KEY,
-            message,
-            persistentMessage(delay)
-        ));
-        metrics.incrementRabbitMqMessagesPublished();
+        publishWithConfirm("rabbitmq.publish.retry", RabbitMqTopology.RETRY_EMAIL_ROUTING_KEY, message, persistentMessage(delay));
     }
 
     @Override
     public void publishDeadLetter(DeliveryMessage message) {
-        tracing.observe("rabbitmq.publish.dlq", () -> rabbitTemplate.convertAndSend(
-            exchangeName,
-            RabbitMqTopology.DLQ_EMAIL_ROUTING_KEY,
-            message,
-            persistentMessage()
-        ));
+        publishWithConfirm("rabbitmq.publish.dlq", RabbitMqTopology.DLQ_EMAIL_ROUTING_KEY, message, persistentMessage());
+    }
+
+    private void publishWithConfirm(
+        String observationName,
+        String routingKey,
+        DeliveryMessage message,
+        MessagePostProcessor postProcessor
+    ) {
+        tracing.observe(observationName, () -> rabbitTemplate.invoke(operations -> {
+            operations.convertAndSend(exchangeName, routingKey, message, postProcessor);
+            operations.waitForConfirmsOrDie(publisherConfirmTimeout.toMillis());
+            return null;
+        }, null, null));
         metrics.incrementRabbitMqMessagesPublished();
     }
 

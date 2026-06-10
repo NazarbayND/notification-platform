@@ -139,8 +139,9 @@ public class NotificationDeliveryService {
     @Transactional(readOnly = true)
     public List<NotificationDelivery> findReadyForRetry(int limit) {
         int requestedLimit = limit <= 0 ? DEFAULT_POLL_LIMIT : limit;
-        return deliveryRepository.findReadyForAttempt(
+        return deliveryRepository.findReadyForRetryOrExpiredSending(
             EnumSet.of(DeliveryStatus.RETRY_SCHEDULED),
+            DeliveryStatus.SENDING,
             Instant.now(clock),
             PageRequest.of(0, requestedLimit)
         );
@@ -397,6 +398,10 @@ public class NotificationDeliveryService {
     private boolean isEligibleForSending(NotificationDelivery delivery) {
         if (delivery.getStatus() == DeliveryStatus.PENDING) {
             return true;
+        }
+        if (delivery.getStatus() == DeliveryStatus.SENDING) {
+            return delivery.getLockedUntil() != null
+                && !delivery.getLockedUntil().isAfter(Instant.now(clock));
         }
         return delivery.getStatus() == DeliveryStatus.RETRY_SCHEDULED
             && delivery.getNextAttemptAt() != null

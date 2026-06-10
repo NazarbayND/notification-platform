@@ -69,4 +69,36 @@ public interface NotificationDeliveryRepository extends JpaRepository<Notificati
         Pageable pageable
     );
 
+    @EntityGraph(attributePaths = {"notificationRequest", "template"})
+    @Query("""
+        select delivery
+        from NotificationDelivery delivery
+        where (
+            (
+                delivery.status in :retryStatuses
+                and (delivery.nextAttemptAt is null or delivery.nextAttemptAt <= :now)
+            ) or (
+                delivery.status = :sendingStatus
+                and delivery.lockedUntil is not null
+                and delivery.lockedUntil <= :now
+            )
+        )
+          and (delivery.expiresAt is null or delivery.expiresAt > :now)
+        order by
+          case
+            when delivery.status = :sendingStatus then 0
+            when delivery.nextAttemptAt is null then 1
+            else 2
+          end,
+          delivery.lockedUntil asc,
+          delivery.nextAttemptAt asc,
+          delivery.createdAt asc
+        """)
+    List<NotificationDelivery> findReadyForRetryOrExpiredSending(
+        @Param("retryStatuses") Collection<DeliveryStatus> retryStatuses,
+        @Param("sendingStatus") DeliveryStatus sendingStatus,
+        @Param("now") Instant now,
+        Pageable pageable
+    );
+
 }

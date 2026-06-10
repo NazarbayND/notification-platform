@@ -10,6 +10,8 @@ spring:
     port: ${RABBITMQ_PORT:5672}
     username: ${RABBITMQ_USERNAME:notification}
     password: ${RABBITMQ_PASSWORD:notification}
+    publisher-confirm-type: correlated
+    publisher-returns: true
     listener:
       simple:
         acknowledge-mode: manual
@@ -63,6 +65,7 @@ notification:
   rabbitmq:
     exchange: notifications.exchange
     retry-delay: PT1M
+    publisher-confirm-timeout: ${NOTIFICATION_RABBITMQ_PUBLISHER_CONFIRM_TIMEOUT:PT5S}
 
 outbox:
   publisher:
