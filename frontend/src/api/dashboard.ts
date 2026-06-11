@@ -9,6 +9,20 @@ export const dashboardKeys = {
 export function useDashboardStats() {
   return useQuery({
     queryKey: dashboardKeys.stats,
-    queryFn: (): Promise<DashboardStats> => request<DashboardStats>("/admin/dashboard")
+    queryFn: async (): Promise<DashboardStats> => {
+      const stats = await request<{
+        totalNotificationsToday?: number;
+        sentCount?: number;
+        failedCount?: number;
+        pendingOutboxCount?: number;
+        dlqCount?: number;
+      }>("/admin/dashboard");
+      return {
+        totalNotifications: stats.totalNotificationsToday ?? 0,
+        pendingDeliveries: stats.pendingOutboxCount ?? 0,
+        failedDeliveries: stats.failedCount ?? 0,
+        deadLetteredDeliveries: stats.dlqCount ?? 0
+      };
+    }
   });
 }

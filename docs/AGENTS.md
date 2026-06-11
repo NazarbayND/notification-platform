@@ -1,17 +1,14 @@
 # Agent Instructions
 
-You are helping build a Senior-level Notification Platform project.
+This project is a Spring Boot microservices notification platform.
 
 ## Important rules
 
-- Do not implement everything at once.
 - Work in small, reviewable steps.
-- Prefer simple modular monolith first.
-- Do not introduce microservices unless asked.
-- Do not introduce Kafka unless asked.
-- Use PostgreSQL as source of truth.
-- Use Redis only for cache/rate-limit/idempotency optimization.
-- Use outbox pattern for reliable queue publishing.
+- Keep service ownership explicit.
+- Use PostgreSQL-owned schemas for local development.
+- Use Redis only for cache, rate-limit, and idempotency acceleration.
+- Use the outbox pattern for reliable queue publishing.
 - Add tests for service logic.
 - Add Flyway migrations for schema changes.
 - Keep business logic out of controllers.
@@ -22,13 +19,16 @@ You are helping build a Senior-level Notification Platform project.
 - Spring Boot
 - PostgreSQL
 - Flyway
-- Spring Data JPA
+- JDBC
+- RabbitMQ
 - Validation
 - Docker Compose
 
 ## Architecture principles
 
-- Separate Notification API and Management API logically.
-- Separate NotificationRequest from NotificationDelivery.
-- Workers must be idempotent.
+- Notification API owns notification request state and outbox writes.
+- Template service owns template rendering and validation.
+- Preference service owns user/product/channel choices.
+- Outbox publisher owns polling and broker publishing.
+- Workers own provider calls, idempotency, and delivery attempts.
 - Provider-specific logic must be hidden behind adapters.

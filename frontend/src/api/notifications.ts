@@ -31,26 +31,18 @@ export interface SendNotificationPayload {
 export function useNotifications(filters: NotificationFilters) {
   return useQuery({
     queryKey: notificationKeys.list(filters),
-    queryFn: () => {
+    queryFn: async () => {
       const params = new URLSearchParams();
-      if (filters.productId) {
-        params.set("productId", filters.productId);
-      }
       if (filters.status) {
         params.set("status", filters.status);
       }
-      if (filters.priority) {
-        params.set("priority", filters.priority);
-      }
-      if (filters.dateFrom) {
-        params.set("dateFrom", filters.dateFrom);
-      }
-      if (filters.dateTo) {
-        params.set("dateTo", filters.dateTo);
-      }
 
       const query = params.toString();
-      return request<NotificationRequest[]>(`/notifications${query ? `?${query}` : ""}`);
+      const notifications = await request<MicroserviceNotification[]>(`/admin/notifications${query ? `?${query}` : ""}`);
+      return notifications
+        .filter((notification) => !filters.productId || notification.productId === filters.productId)
+        .filter((notification) => !filters.priority || notification.priority === filters.priority)
+        .map(toNotificationRequest);
     }
   });
 }
@@ -59,7 +51,7 @@ export function useNotification(id: string | undefined) {
   return useQuery({
     queryKey: notificationKeys.detail(id),
     enabled: Boolean(id),
-    queryFn: () => request<NotificationRequest>(`/notifications/${id}`)
+    queryFn: async () => toNotificationRequest(await request<MicroserviceNotification>(`/admin/notifications/${id}`))
   });
 }
 
@@ -67,13 +59,92 @@ export function useSendNotification() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (payload: SendNotificationPayload) =>
-      request<NotificationRequest>("/notifications", {
+    mutationFn: async (payload: SendNotificationPayload) => {
+      const channel = payload.requestedChannels[0] ?? "EMAIL";
+      const accepted = await request<{
+        notificationId: string;
+        status: NotificationRequestStatus;
+        correlationId: string;
+        channel: Channel;
+        outboxEventId: string | null;
+      }>("/admin/notifications", {
         method: "POST",
-        body: JSON.stringify(payload)
-      }),
+        body: JSON.stringify({
+          productId: payload.productId,
+          userId: payload.externalUserId,
+          channel,
+          templateKey: payload.templateKey,
+          destination: destinationFor(channel, payload.recipient),
+          priority: payload.priority,
+          idempotencyKey: payload.idempotencyKey,
+          variables: payload.payload
+        })
+      });
+      return {
+        id: accepted.notificationId,
+        productId: payload.productId,
+        batchId: null,
+        templateKey: payload.templateKey,
+        externalUserId: payload.externalUserId,
+        idempotencyKey: payload.idempotencyKey,
+        category: payload.category,
+        priority: payload.priority,
+        requestedChannels: [accepted.channel],
+        status: accepted.status,
+        payload: payload.payload,
+        recipient: payload.recipient,
+        expiresAt: payload.expiresAt,
+        createdAt: new Date().toISOString()
+      };
+    },
     onSuccess: (notification) => {
       queryClient.setQueryData(notificationKeys.detail(notification.id), notification);
     }
   });
+}
+
+interface MicroserviceNotification {
+  id: string;
+  productId: string;
+  userId: string;
+  channel: Channel;
+  templateKey: string;
+  priority: NotificationPriority;
+  status: NotificationRequestStatus;
+  idempotencyKey: string;
+  destination: string;
+  variables: Record<string, unknown>;
+  createdAt: string | null;
+}
+
+function toNotificationRequest(notification: MicroserviceNotification): NotificationRequest {
+  return {
+    id: notification.id,
+    productId: notification.productId,
+    batchId: null,
+    templateKey: notification.templateKey,
+    externalUserId: notification.userId,
+    idempotencyKey: notification.idempotencyKey,
+    category: "default",
+    priority: notification.priority,
+    requestedChannels: [notification.channel],
+    status: notification.status,
+    payload: notification.variables ?? {},
+    recipient: { destination: notification.destination },
+    expiresAt: null,
+    createdAt: notification.createdAt
+  };
+}
+
+function destinationFor(channel: Channel, recipient: Record<string, unknown>) {
+  if (channel === "EMAIL") {
+    return String(recipient.email ?? "");
+  }
+  if (channel === "SMS") {
+    return String(recipient.phone ?? recipient.destination ?? "");
+  }
+  if (channel === "PUSH") {
+    return String(recipient.token ?? recipient.destination ?? "");
+  }
+  return String(recipient.userId ?? recipient.destination ?? "");
 }

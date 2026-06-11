@@ -29,7 +29,7 @@ export function useDeliveries(filters: DeliveryFilters) {
       }
 
       if (filters.notificationRequestId) {
-        return request<Delivery[]>(`/notifications/${filters.notificationRequestId}/deliveries`);
+        return request<Delivery[]>(`/admin/notifications/${filters.notificationRequestId}/deliveries`);
       }
 
       const query = params.toString();
@@ -42,8 +42,7 @@ export function useRetryDelivery() {
   return useMutation({
     mutationFn: async (deliveryId: string) => {
       void deliveryId;
-      // TODO: Connect when backend exposes POST /api/v1/admin/deliveries/{id}/retry.
-      throw new Error("Delivery retry is not supported by the backend yet.");
+      throw new Error("Delivery retry is handled through outbox event retry in the microservices BFF.");
     }
   });
 }

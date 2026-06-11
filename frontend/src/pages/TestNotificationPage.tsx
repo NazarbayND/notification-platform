@@ -1,7 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useSendNotification } from "../api/notifications";
-import { useProducts } from "../api/products";
 import { useTemplates } from "../api/templates";
 import { Button } from "../components/Button";
 import { SelectField, TextAreaField, TextField } from "../components/Field";
@@ -22,10 +21,8 @@ const defaultPayload = JSON.stringify(
 );
 
 export function TestNotificationPage() {
-  const productsQuery = useProducts();
-  const firstProductId = productsQuery.data?.[0]?.id ?? "";
-  const [productId, setProductId] = useState("");
-  const selectedProductId = productId || firstProductId;
+  const [productId, setProductId] = useState("demo-product");
+  const selectedProductId = productId;
   const templatesQuery = useTemplates({ productId: selectedProductId, channel: "EMAIL", status: "ACTIVE" });
   const emailTemplates = useMemo(
     () => (templatesQuery.data ?? []).filter((template) => template.channel === "EMAIL" && template.status === "ACTIVE"),
@@ -96,19 +93,12 @@ export function TestNotificationPage() {
 
   return (
     <>
-      <PageHeader title="Send Test Notification" description="Create an EMAIL notification request and queue it for the mock provider." />
+      <PageHeader title="Send Test Notification" description="Create an EMAIL notification request and queue it for local delivery." />
 
       <div className="grid gap-6 xl:grid-cols-[460px_1fr]">
         <Panel title="Test notification">
           <form className="grid gap-4" onSubmit={handleSubmit}>
-            <SelectField label="Product" value={selectedProductId} onChange={(event) => handleProductChange(event.target.value)} required>
-              <option value="">Select product</option>
-              {productsQuery.data?.map((product) => (
-                <option key={product.id} value={product.id}>
-                  {product.name}
-                </option>
-              ))}
-            </SelectField>
+            <TextField label="Product ID" value={selectedProductId} onChange={(event) => handleProductChange(event.target.value)} required />
 
             <SelectField label="Email template" value={templateKey} onChange={(event) => setTemplateKey(event.target.value)} required>
               <option value="">Select template</option>
@@ -155,8 +145,6 @@ export function TestNotificationPage() {
         </Panel>
 
         <section className="grid content-start gap-6">
-          {productsQuery.isLoading ? <LoadingBlock /> : null}
-          {productsQuery.isError ? <ErrorBlock message={productsQuery.error.message} /> : null}
           {selectedProductId && templatesQuery.isLoading ? <LoadingBlock /> : null}
           {selectedProductId && !templatesQuery.isLoading && emailTemplates.length === 0 ? (
             <StateBlock title="No active EMAIL templates" message="Create an active EMAIL template before sending a test notification." />

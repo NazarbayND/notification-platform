@@ -1,5 +1,4 @@
 import { FormEvent, useMemo, useState } from "react";
-import { useProducts } from "../api/products";
 import { TemplateFilters, useCreateTemplate, useTemplates } from "../api/templates";
 import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
@@ -15,10 +14,8 @@ const channels: Channel[] = ["EMAIL", "SMS", "PUSH", "IN_APP"];
 const templateStatuses: TemplateStatus[] = ["DRAFT", "ACTIVE", "ARCHIVED"];
 
 export function TemplatesPage() {
-  const productsQuery = useProducts();
-  const firstProductId = productsQuery.data?.[0]?.id ?? "";
-  const [filters, setFilters] = useState<TemplateFilters>({ productId: "", channel: "", status: "" });
-  const selectedProductId = filters.productId || firstProductId;
+  const [filters, setFilters] = useState<TemplateFilters>({ productId: "demo-product", channel: "", status: "" });
+  const selectedProductId = filters.productId ?? "";
   const templatesQuery = useTemplates({ ...filters, productId: selectedProductId });
 
   const visibleTemplates = useMemo(() => {
@@ -40,14 +37,7 @@ export function TemplatesPage() {
       <PageHeader title="Templates" description="Create and inspect channel-specific message templates." />
 
       <div className="mb-6 grid gap-3 rounded-md border border-line bg-white p-4 shadow-sm md:grid-cols-3">
-        <SelectField label="Product" value={selectedProductId} onChange={(event) => updateFilter("productId", event.target.value)}>
-          <option value="">Select product</option>
-          {productsQuery.data?.map((product) => (
-            <option key={product.id} value={product.id}>
-              {product.name}
-            </option>
-          ))}
-        </SelectField>
+        <TextField label="Product ID" value={selectedProductId} onChange={(event) => updateFilter("productId", event.target.value)} />
         <SelectField label="Channel" value={filters.channel} onChange={(event) => updateFilter("channel", event.target.value as Channel | "")}>
           <option value="">All channels</option>
           {channels.map((channel) => (

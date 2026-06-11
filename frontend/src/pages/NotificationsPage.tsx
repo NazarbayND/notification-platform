@@ -1,7 +1,6 @@
 import { FormEvent, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useNotifications } from "../api/notifications";
-import { useProducts } from "../api/products";
 import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
 import { DataTable } from "../components/DataTable";
@@ -24,7 +23,6 @@ const priorities: NotificationPriority[] = ["LOW", "NORMAL", "HIGH"];
 
 export function NotificationsPage() {
   const navigate = useNavigate();
-  const productsQuery = useProducts();
   const [lookupId, setLookupId] = useState("");
   const [productId, setProductId] = useState("");
   const [status, setStatus] = useState<NotificationRequestStatus | "">("");
@@ -64,14 +62,7 @@ export function NotificationsPage() {
 
         <Panel title="Filters">
           <div className="grid gap-3 md:grid-cols-5">
-            <SelectField label="Product" value={productId} onChange={(event) => setProductId(event.target.value)}>
-              <option value="">All products</option>
-              {productsQuery.data?.map((product) => (
-                <option key={product.id} value={product.id}>
-                  {product.name}
-                </option>
-              ))}
-            </SelectField>
+            <TextField label="Product ID" value={productId} onChange={(event) => setProductId(event.target.value)} />
             <SelectField label="Status" value={status} onChange={(event) => setStatus(event.target.value as NotificationRequestStatus | "")}>
               <option value="">All statuses</option>
               {notificationStatuses.map((item) => (
@@ -98,8 +89,8 @@ export function NotificationsPage() {
       {notificationsQuery.isError ? <ErrorBlock message={notificationsQuery.error.message} /> : null}
       {notificationsQuery.data?.length === 0 ? (
         <StateBlock
-          title="Notification list endpoint is not available yet"
-          message="The current backend supports GET /api/v1/notifications/{id}, but not a filtered notification list. Use the detail lookup when you have an id."
+          title="No notifications found"
+          message="Adjust the filters or send a test notification."
         />
       ) : null}
       {notificationsQuery.data && notificationsQuery.data.length > 0 ? (
