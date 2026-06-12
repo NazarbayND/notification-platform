@@ -94,14 +94,14 @@ data:
         endpoint: jaeger:4317
         tls:
           insecure: true
-      logging:
+      debug:
         verbosity: basic
     service:
       pipelines:
         traces:
           receivers: [otlp]
           processors: [batch]
-          exporters: [otlp/jaeger, logging]
+          exporters: [otlp/jaeger, debug]
 ---
 apiVersion: v1
 kind: ConfigMap

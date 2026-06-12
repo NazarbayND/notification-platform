@@ -16,6 +16,12 @@ data:
   TEMPLATE_SERVICE_URL: http://template-service:8082
   PREFERENCE_SERVICE_URL: http://preference-service:8083
   NOTIFICATION_API_URL: http://notification-api-service:8081
+  OUTBOX_PUBLISHER_SERVICE_URL: http://outbox-publisher-service:8084
+  EMAIL_WORKER_SERVICE_URL: http://email-worker-service:8085
+  SMS_WORKER_SERVICE_URL: http://sms-worker-service:8086
+  PUSH_WORKER_SERVICE_URL: http://push-worker-service:8087
+  IN_APP_WORKER_SERVICE_URL: http://in-app-worker-service:8089
+  WEBHOOK_WORKER_SERVICE_URL: http://webhook-worker-service:8090
   OUTBOX_BATCH_SIZE: "500"
   OUTBOX_FIXED_DELAY_MS: "250"
   ENVIRONMENT: kubernetes
@@ -24,6 +30,8 @@ data:
   MANAGEMENT_TRACING_SAMPLING_PROBABILITY: "1.0"
   MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health,prometheus,metrics
   MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
+  SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "3"
+  SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: "1"
 ---
 apiVersion: v1
 kind: Secret
@@ -239,7 +247,6 @@ spec:
         app: mailhog
     spec:
       securityContext:
-        runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -279,7 +286,7 @@ metadata:
   name: notification-api-service
   namespace: notification-platform
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: notification-api-service
@@ -335,6 +342,16 @@ spec:
                 configMapKeyRef:
                   name: notification-platform-config
                   key: MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED
+            - name: SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE
+            - name: SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE
             - name: SPRING_DATASOURCE_URL
               value: jdbc:postgresql://postgres:5432/notification_platform?currentSchema=notification_api
             - name: SPRING_DATASOURCE_USERNAME
@@ -399,7 +416,7 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: notification-api-service
-  minReplicas: 2
+  minReplicas: 1
   maxReplicas: 8
   metrics:
     - type: Resource
@@ -415,7 +432,7 @@ metadata:
   name: template-service
   namespace: notification-platform
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: template-service
@@ -471,6 +488,16 @@ spec:
                 configMapKeyRef:
                   name: notification-platform-config
                   key: MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED
+            - name: SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE
+            - name: SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE
             - name: SPRING_DATASOURCE_URL
               value: jdbc:postgresql://postgres:5432/notification_platform?currentSchema=template
             - name: SPRING_DATASOURCE_USERNAME
@@ -525,7 +552,7 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: template-service
-  minReplicas: 2
+  minReplicas: 1
   maxReplicas: 6
   metrics:
     - type: Resource
@@ -541,7 +568,7 @@ metadata:
   name: preference-service
   namespace: notification-platform
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: preference-service
@@ -597,6 +624,16 @@ spec:
                 configMapKeyRef:
                   name: notification-platform-config
                   key: MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED
+            - name: SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE
+            - name: SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE
             - name: SPRING_DATASOURCE_URL
               value: jdbc:postgresql://postgres:5432/notification_platform?currentSchema=preference
             - name: SPRING_DATASOURCE_USERNAME
@@ -656,7 +693,7 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: preference-service
-  minReplicas: 2
+  minReplicas: 1
   maxReplicas: 6
   metrics:
     - type: Resource
@@ -672,7 +709,7 @@ metadata:
   name: outbox-publisher-service
   namespace: notification-platform
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: outbox-publisher-service
@@ -728,6 +765,16 @@ spec:
                 configMapKeyRef:
                   name: notification-platform-config
                   key: MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED
+            - name: SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE
+            - name: SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE
             - name: SPRING_DATASOURCE_URL
               value: jdbc:postgresql://postgres:5432/notification_platform?currentSchema=notification_api
             - name: SPRING_DATASOURCE_USERNAME
@@ -813,7 +860,7 @@ metadata:
   name: email-worker-service
   namespace: notification-platform
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: email-worker-service
@@ -869,6 +916,16 @@ spec:
                 configMapKeyRef:
                   name: notification-platform-config
                   key: MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED
+            - name: SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE
+            - name: SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE
             - name: SPRING_DATASOURCE_URL
               value: jdbc:postgresql://postgres:5432/notification_platform?currentSchema=delivery_email
             - name: SPRING_DATASOURCE_USERNAME
@@ -1010,6 +1067,16 @@ spec:
                 configMapKeyRef:
                   name: notification-platform-config
                   key: MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED
+            - name: SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE
+            - name: SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE
             - name: SPRING_DATASOURCE_URL
               value: jdbc:postgresql://postgres:5432/notification_platform?currentSchema=delivery_sms
             - name: SPRING_DATASOURCE_USERNAME
@@ -1027,6 +1094,16 @@ spec:
                 configMapKeyRef:
                   name: notification-platform-config
                   key: RABBITMQ_HOST
+            - name: SPRING_RABBITMQ_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: notification-platform-secrets
+                  key: RABBITMQ_USER
+            - name: SPRING_RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: notification-platform-secrets
+                  key: RABBITMQ_PASSWORD
           readinessProbe:
             httpGet:
               path: /actuator/health/readiness
@@ -1141,6 +1218,16 @@ spec:
                 configMapKeyRef:
                   name: notification-platform-config
                   key: MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED
+            - name: SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE
+            - name: SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE
             - name: SPRING_DATASOURCE_URL
               value: jdbc:postgresql://postgres:5432/notification_platform?currentSchema=delivery_push
             - name: SPRING_DATASOURCE_USERNAME
@@ -1158,6 +1245,16 @@ spec:
                 configMapKeyRef:
                   name: notification-platform-config
                   key: RABBITMQ_HOST
+            - name: SPRING_RABBITMQ_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: notification-platform-secrets
+                  key: RABBITMQ_USER
+            - name: SPRING_RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: notification-platform-secrets
+                  key: RABBITMQ_PASSWORD
           readinessProbe:
             httpGet:
               path: /actuator/health/readiness
@@ -1230,7 +1327,6 @@ spec:
         prometheus.io/port: "8089"
     spec:
       securityContext:
-        runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -1276,6 +1372,16 @@ spec:
                 configMapKeyRef:
                   name: notification-platform-config
                   key: MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED
+            - name: SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE
+            - name: SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE
             - name: SPRING_DATASOURCE_URL
               value: jdbc:postgresql://postgres:5432/notification_platform?currentSchema=delivery_in_app
             - name: SPRING_DATASOURCE_USERNAME
@@ -1293,6 +1399,16 @@ spec:
                 configMapKeyRef:
                   name: notification-platform-config
                   key: RABBITMQ_HOST
+            - name: SPRING_RABBITMQ_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: notification-platform-secrets
+                  key: RABBITMQ_USER
+            - name: SPRING_RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: notification-platform-secrets
+                  key: RABBITMQ_PASSWORD
             - name: IN_APP_PROVIDER
               value: db
           readinessProbe:
@@ -1367,7 +1483,6 @@ spec:
         prometheus.io/port: "8090"
     spec:
       securityContext:
-        runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -1413,6 +1528,16 @@ spec:
                 configMapKeyRef:
                   name: notification-platform-config
                   key: MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED
+            - name: SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE
+            - name: SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE
             - name: SPRING_DATASOURCE_URL
               value: jdbc:postgresql://postgres:5432/notification_platform?currentSchema=delivery_webhook
             - name: SPRING_DATASOURCE_USERNAME
@@ -1430,6 +1555,16 @@ spec:
                 configMapKeyRef:
                   name: notification-platform-config
                   key: RABBITMQ_HOST
+            - name: SPRING_RABBITMQ_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: notification-platform-secrets
+                  key: RABBITMQ_USER
+            - name: SPRING_RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: notification-platform-secrets
+                  key: RABBITMQ_PASSWORD
             - name: WEBHOOK_PROVIDER
               value: test
           readinessProbe:
@@ -1490,7 +1625,7 @@ metadata:
   name: admin-bff-service
   namespace: notification-platform
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: admin-bff-service
@@ -1546,6 +1681,16 @@ spec:
                 configMapKeyRef:
                   name: notification-platform-config
                   key: MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED
+            - name: SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE
+            - name: SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE
             - name: NOTIFICATION_API_URL
               valueFrom:
                 configMapKeyRef:
@@ -1561,6 +1706,36 @@ spec:
                 configMapKeyRef:
                   name: notification-platform-config
                   key: PREFERENCE_SERVICE_URL
+            - name: OUTBOX_PUBLISHER_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: OUTBOX_PUBLISHER_SERVICE_URL
+            - name: EMAIL_WORKER_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: EMAIL_WORKER_SERVICE_URL
+            - name: SMS_WORKER_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: SMS_WORKER_SERVICE_URL
+            - name: PUSH_WORKER_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: PUSH_WORKER_SERVICE_URL
+            - name: IN_APP_WORKER_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: IN_APP_WORKER_SERVICE_URL
+            - name: WEBHOOK_WORKER_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: WEBHOOK_WORKER_SERVICE_URL
           readinessProbe:
             httpGet:
               path: /actuator/health/readiness
@@ -1603,7 +1778,7 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: admin-bff-service
-  minReplicas: 2
+  minReplicas: 1
   maxReplicas: 6
   metrics:
     - type: Resource
@@ -1619,7 +1794,7 @@ metadata:
   name: admin-frontend
   namespace: notification-platform
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: admin-frontend
@@ -1676,7 +1851,7 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: admin-frontend
-  minReplicas: 2
+  minReplicas: 1
   maxReplicas: 6
   metrics:
     - type: Resource
