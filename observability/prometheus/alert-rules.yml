@@ -1,0 +1,52 @@
+groups:
+  - name: notification-platform-alerts
+    rules:
+      - alert: HighApiLatency
+        expr: histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{service="notification-api-service"}[5m])) by (le)) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Notification API p95 latency is above 1s
+      - alert: OutboxBacklogGrowing
+        expr: increase(outbox_pending_total[10m]) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Outbox pending backlog is growing
+      - alert: OutboxOldestEventTooOld
+        expr: outbox_oldest_pending_age_seconds > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Oldest pending outbox event is older than five minutes
+      - alert: WorkerHighFailureRate
+        expr: sum(rate(worker_messages_failed_total[5m])) / clamp_min(sum(rate(worker_messages_consumed_total[5m])), 1) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Worker failure rate is above 5%
+      - alert: ProviderHighErrorRate
+        expr: sum(rate(provider_error_total[5m])) / clamp_min(sum(rate(delivery_attempt_total[5m])), 1) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Provider error rate is above 5%
+      - alert: DeadLetterEventsDetected
+        expr: outbox_dead_letter_total > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Dead-lettered outbox events detected
+      - alert: AdminBffDownstreamErrors
+        expr: increase(admin_bff_downstream_error_total[5m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Admin BFF downstream errors exceeded threshold

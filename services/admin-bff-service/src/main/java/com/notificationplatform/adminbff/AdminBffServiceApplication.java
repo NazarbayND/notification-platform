@@ -1,5 +1,7 @@
 package com.notificationplatform.adminbff;
 
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -17,6 +19,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 
 @SpringBootApplication(exclude = DataSourceAutoConfiguration.class)
 public class AdminBffServiceApplication {
@@ -37,25 +40,32 @@ public class AdminBffServiceApplication {
     @RequestMapping("/admin")
     static class AdminController {
         private final Downstream downstream;
+        private final MeterRegistry meterRegistry;
 
-        AdminController(Downstream downstream) {
+        AdminController(Downstream downstream, MeterRegistry meterRegistry) {
             this.downstream = downstream;
+            this.meterRegistry = meterRegistry;
         }
 
         @GetMapping({"/dashboard", "/dashboard/stats"})
         DashboardStats dashboard() {
-            Object[] notifications = downstream.notificationApi.get()
-                    .uri("/notifications?size=200")
-                    .retrieve()
-                    .body(Object[].class);
-            Object[] outbox = downstream.outboxPublisher.get()
-                    .uri("/outbox/events")
-                    .retrieve()
-                    .body(Object[].class);
-            long totalNotifications = notifications == null ? 0 : notifications.length;
-            long pendingOutbox = countByStatus(outbox, "PENDING");
-            long failedOutbox = countByStatus(outbox, "FAILED") + countByStatus(outbox, "DEAD_LETTER");
-            return new DashboardStats(totalNotifications, 0, failedOutbox, pendingOutbox, failedOutbox, countByStatus(outbox, "DEAD_LETTER"), 0.0, 0.0);
+            return Timer.builder("admin_bff_request_duration_seconds")
+                    .tag("endpoint", "dashboard")
+                    .register(meterRegistry)
+                    .record(() -> {
+                        Object[] notifications = downstreamRequest("notification-api-service", () -> downstream.notificationApi.get()
+                                .uri("/notifications?size=200")
+                                .retrieve()
+                                .body(Object[].class));
+                        Object[] outbox = downstreamRequest("outbox-publisher-service", () -> downstream.outboxPublisher.get()
+                                .uri("/outbox/events")
+                                .retrieve()
+                                .body(Object[].class));
+                        long totalNotifications = notifications == null ? 0 : notifications.length;
+                        long pendingOutbox = countByStatus(outbox, "PENDING");
+                        long failedOutbox = countByStatus(outbox, "FAILED") + countByStatus(outbox, "DEAD_LETTER");
+                        return new DashboardStats(totalNotifications, 0, failedOutbox, pendingOutbox, failedOutbox, countByStatus(outbox, "DEAD_LETTER"), 0.0, 0.0);
+                    });
         }
 
         @GetMapping("/notifications")
@@ -64,7 +74,7 @@ public class AdminBffServiceApplication {
                 @RequestParam(defaultValue = "50") int size,
                 @RequestParam(required = false) String status,
                 @RequestParam(required = false) String channel) {
-            return downstream.notificationApi.get()
+            return downstreamRequest("notification-api-service", () -> downstream.notificationApi.get()
                     .uri(uri -> uri.path("/notifications")
                             .queryParam("page", page)
                             .queryParam("size", size)
@@ -72,17 +82,17 @@ public class AdminBffServiceApplication {
                             .queryParamIfPresent("channel", java.util.Optional.ofNullable(channel))
                             .build())
                     .retrieve()
-                    .body(Object.class);
+                    .body(Object.class));
         }
 
         @GetMapping("/notifications/{id}")
         Object notification(@PathVariable UUID id) {
-            return downstream.notificationApi.get().uri("/notifications/{id}", id).retrieve().body(Object.class);
+            return downstreamRequest("notification-api-service", () -> downstream.notificationApi.get().uri("/notifications/{id}", id).retrieve().body(Object.class));
         }
 
         @PostMapping("/notifications")
         Object createNotification(@RequestBody Map<String, Object> request) {
-            return downstream.notificationApi.post().uri("/notifications").body(request).retrieve().body(Object.class);
+            return downstreamRequest("notification-api-service", () -> downstream.notificationApi.post().uri("/notifications").body(request).retrieve().body(Object.class));
         }
 
         @GetMapping("/notifications/{id}/deliveries")
@@ -97,32 +107,32 @@ public class AdminBffServiceApplication {
 
         @GetMapping("/outbox-events")
         Object outboxEvents() {
-            return downstream.outboxPublisher.get().uri("/outbox/events").retrieve().body(Object.class);
+            return downstreamRequest("outbox-publisher-service", () -> downstream.outboxPublisher.get().uri("/outbox/events").retrieve().body(Object.class));
         }
 
         @PostMapping("/outbox-events/{id}/retry")
         Object retryOutboxEvent(@PathVariable UUID id) {
-            return downstream.outboxPublisher.post().uri("/outbox/events/{id}/retry", id).retrieve().body(Object.class);
+            return downstreamRequest("outbox-publisher-service", () -> downstream.outboxPublisher.post().uri("/outbox/events/{id}/retry", id).retrieve().body(Object.class));
         }
 
         @GetMapping("/templates")
         Object templates() {
-            return downstream.template.get().uri("/templates").retrieve().body(Object.class);
+            return downstreamRequest("template-service", () -> downstream.template.get().uri("/templates").retrieve().body(Object.class));
         }
 
         @PostMapping("/templates")
         Object createTemplate(@RequestBody Map<String, Object> request) {
-            return downstream.template.post().uri("/templates").body(request).retrieve().body(Object.class);
+            return downstreamRequest("template-service", () -> downstream.template.post().uri("/templates").body(request).retrieve().body(Object.class));
         }
 
         @PutMapping("/templates/{id}")
         Object updateTemplate(@PathVariable UUID id, @RequestBody Map<String, Object> request) {
-            return downstream.template.put().uri("/templates/{id}", id).body(request).retrieve().body(Object.class);
+            return downstreamRequest("template-service", () -> downstream.template.put().uri("/templates/{id}", id).body(request).retrieve().body(Object.class));
         }
 
         @PostMapping("/templates/{id}/preview")
         Object previewTemplate(@PathVariable UUID id, @RequestBody Map<String, Object> request) {
-            return downstream.template.post().uri("/templates/{id}/preview", id).body(request).retrieve().body(Object.class);
+            return downstreamRequest("template-service", () -> downstream.template.post().uri("/templates/{id}/preview", id).body(request).retrieve().body(Object.class));
         }
 
         @GetMapping("/preferences")
@@ -131,7 +141,7 @@ public class AdminBffServiceApplication {
                 @RequestParam(defaultValue = "50") int size,
                 @RequestParam(required = false) String productId,
                 @RequestParam(required = false) String userId) {
-            return downstream.preference.get()
+            return downstreamRequest("preference-service", () -> downstream.preference.get()
                     .uri(uri -> uri.path("/preferences")
                             .queryParam("page", page)
                             .queryParam("size", size)
@@ -139,37 +149,46 @@ public class AdminBffServiceApplication {
                             .queryParamIfPresent("userId", java.util.Optional.ofNullable(userId))
                             .build())
                     .retrieve()
-                    .body(Object.class);
+                    .body(Object.class));
         }
 
         @PutMapping("/preferences/{id}")
         Object updatePreference(@PathVariable UUID id, @RequestBody Map<String, Object> request) {
-            return downstream.preference.put().uri("/preferences/{id}", id).body(request).retrieve().body(Object.class);
+            return downstreamRequest("preference-service", () -> downstream.preference.put().uri("/preferences/{id}", id).body(request).retrieve().body(Object.class));
         }
 
         @GetMapping("/test/email-messages")
         Object emailMessages() {
-            return downstream.email.get().uri("/test/email-messages").retrieve().body(Object.class);
+            return downstreamRequest("email-worker-service", () -> downstream.email.get().uri("/test/email-messages").retrieve().body(Object.class));
         }
 
         @GetMapping("/test/sms-messages")
         Object smsMessages() {
-            return downstream.sms.get().uri("/test/sms-messages").retrieve().body(Object.class);
+            return downstreamRequest("sms-worker-service", () -> downstream.sms.get().uri("/test/sms-messages").retrieve().body(Object.class));
         }
 
         @GetMapping("/test/push-messages")
         Object pushMessages() {
-            return downstream.push.get().uri("/test/push-messages").retrieve().body(Object.class);
+            return downstreamRequest("push-worker-service", () -> downstream.push.get().uri("/test/push-messages").retrieve().body(Object.class));
         }
 
         @GetMapping("/test/in-app-notifications")
         Object inAppNotifications() {
-            return downstream.inApp.get().uri("/test/in-app-notifications").retrieve().body(Object.class);
+            return downstreamRequest("in-app-worker-service", () -> downstream.inApp.get().uri("/test/in-app-notifications").retrieve().body(Object.class));
         }
 
         @GetMapping("/test/webhook-requests")
         Object webhookRequests() {
-            return downstream.webhook.get().uri("/received-webhooks").retrieve().body(Object.class);
+            return downstreamRequest("webhook-worker-service", () -> downstream.webhook.get().uri("/received-webhooks").retrieve().body(Object.class));
+        }
+
+        private <T> T downstreamRequest(String service, java.util.function.Supplier<T> call) {
+            try {
+                return call.get();
+            } catch (RestClientException exception) {
+                meterRegistry.counter("admin_bff_downstream_error_total", "service", service, "reason", exception.getClass().getSimpleName()).increment();
+                throw exception;
+            }
         }
 
         private long countByStatus(Object[] items, String status) {
@@ -184,7 +203,7 @@ public class AdminBffServiceApplication {
         }
 
         private List<Map<String, Object>> outboxEventsAsDeliveries(UUID notificationId) {
-            Object[] events = downstream.outboxPublisher.get().uri("/outbox/events").retrieve().body(Object[].class);
+            Object[] events = downstreamRequest("outbox-publisher-service", () -> downstream.outboxPublisher.get().uri("/outbox/events").retrieve().body(Object[].class));
             if (events == null) {
                 return List.of();
             }

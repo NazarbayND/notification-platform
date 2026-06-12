@@ -1,6 +1,8 @@
 package com.notificationplatform.pushworker;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import java.sql.ResultSet;
@@ -14,6 +16,7 @@ import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.BindingBuilder;
 import org.springframework.amqp.core.DirectExchange;
 import org.springframework.amqp.core.Queue;
+import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,6 +27,7 @@ import org.springframework.context.annotation.Primary;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -127,20 +131,57 @@ public class PushWorkerServiceApplication {
     static class PushDeliveryConsumer {
         private final DeliveryRepository repository;
         private final PushProvider provider;
+        private final MeterRegistry meterRegistry;
 
-        PushDeliveryConsumer(DeliveryRepository repository, PushProvider provider) {
+        PushDeliveryConsumer(DeliveryRepository repository, PushProvider provider, MeterRegistry meterRegistry) {
             this.repository = repository;
             this.provider = provider;
+            this.meterRegistry = meterRegistry;
         }
 
         @RabbitListener(queues = PUSH_QUEUE)
-        void consume(DeliveryJob job) {
-            if (!repository.markProcessing(job.eventId())) {
-                return;
+        void consume(DeliveryJob job, @Header(name = "X-Correlation-Id", required = false) String correlationId) {
+            Timer.Sample processingTimer = Timer.start(meterRegistry);
+            meterRegistry.counter("worker_messages_consumed_total", "service", "push-worker-service", "channel", "PUSH").increment();
+            putContext(job, correlationId);
+            try {
+                if (!repository.markProcessing(job.eventId())) {
+                    meterRegistry.counter("worker_duplicate_events_skipped_total", "service", "push-worker-service", "channel", "PUSH").increment();
+                    return;
+                }
+                ProviderResult result = Timer.builder("provider_request_duration_seconds")
+                        .tag("channel", "PUSH")
+                        .tag("provider", "test-push")
+                        .register(meterRegistry)
+                        .record(() -> provider.sendPush(new SendPushCommand(
+                                job.destination(), job.subject(), job.body(), job.eventId().toString(), job.notificationId().toString())));
+                repository.saveAttempt(job, result);
+                meterRegistry.counter("worker_messages_processed_total", "service", "push-worker-service", "channel", "PUSH", "status", result.status()).increment();
+                meterRegistry.counter("delivery_attempt_total", "channel", "PUSH", "provider", result.provider(), "status", result.status()).increment();
+                if (!"SENT".equals(result.status())) {
+                    meterRegistry.counter("provider_error_total", "channel", "PUSH", "provider", result.provider(), "error_code", String.valueOf(result.errorCode())).increment();
+                }
+            } catch (RuntimeException exception) {
+                meterRegistry.counter("worker_messages_failed_total", "service", "push-worker-service", "channel", "PUSH", "reason", exception.getClass().getSimpleName()).increment();
+                throw exception;
+            } finally {
+                processingTimer.stop(Timer.builder("worker_processing_duration_seconds")
+                        .tag("service", "push-worker-service")
+                        .tag("channel", "PUSH")
+                        .register(meterRegistry));
+                MDC.clear();
             }
-            ProviderResult result = provider.sendPush(new SendPushCommand(
-                    job.destination(), job.subject(), job.body(), job.eventId().toString(), job.notificationId().toString()));
-            repository.saveAttempt(job, result);
+        }
+
+        private void putContext(DeliveryJob job, String correlationId) {
+            if (correlationId != null && !correlationId.isBlank()) {
+                MDC.put("correlationId", correlationId);
+            } else if (job.correlationId() != null && !job.correlationId().isBlank()) {
+                MDC.put("correlationId", job.correlationId());
+            }
+            MDC.put("eventId", String.valueOf(job.eventId()));
+            MDC.put("notificationId", String.valueOf(job.notificationId()));
+            MDC.put("channel", "PUSH");
         }
     }
 

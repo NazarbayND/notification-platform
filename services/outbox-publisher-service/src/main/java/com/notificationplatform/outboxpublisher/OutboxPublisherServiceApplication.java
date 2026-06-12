@@ -1,6 +1,10 @@
 package com.notificationplatform.outboxpublisher;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.DistributionSummary;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Duration;
@@ -8,6 +12,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.slf4j.MDC;
 import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.BindingBuilder;
 import org.springframework.amqp.core.DirectExchange;
@@ -122,14 +127,24 @@ public class OutboxPublisherServiceApplication {
         private final OutboxRepository repository;
         private final RabbitTemplate rabbitTemplate;
         private final int batchSize;
+        private final MeterRegistry meterRegistry;
+        private final DistributionSummary batchSizeSummary;
 
         OutboxPublisher(
                 OutboxRepository repository,
                 RabbitTemplate rabbitTemplate,
+                MeterRegistry meterRegistry,
                 @Value("${OUTBOX_BATCH_SIZE:${outbox.batch-size:100}}") int batchSize) {
             this.repository = repository;
             this.rabbitTemplate = rabbitTemplate;
+            this.meterRegistry = meterRegistry;
             this.batchSize = batchSize;
+            this.batchSizeSummary = DistributionSummary.builder("outbox_publish_batch_size").register(meterRegistry);
+            Gauge.builder("outbox_pending_total", repository, repo -> repo.countStatus("PENDING")).register(meterRegistry);
+            Gauge.builder("outbox_processing_total", repository, repo -> repo.countStatus("PROCESSING")).register(meterRegistry);
+            Gauge.builder("outbox_failed_total", repository, repo -> repo.countStatus("FAILED")).register(meterRegistry);
+            Gauge.builder("outbox_dead_letter_total", repository, repo -> repo.countStatus("DEAD_LETTER")).register(meterRegistry);
+            Gauge.builder("outbox_oldest_pending_age_seconds", repository, OutboxRepository::oldestPendingAgeSeconds).register(meterRegistry);
         }
 
         @Scheduled(fixedDelayString = "${OUTBOX_FIXED_DELAY_MS:${outbox.fixed-delay-ms:500}}")
@@ -138,21 +153,49 @@ public class OutboxPublisherServiceApplication {
         }
 
         PublishResult publishBatch() {
-            List<OutboxEvent> events = repository.claim(batchSize, Duration.ofMinutes(5));
-            int published = 0;
-            int failed = 0;
-            for (OutboxEvent event : events) {
-                try {
-                    DeliveryJob job = DeliveryJob.from(event);
-                    rabbitTemplate.convertAndSend(DELIVERY_EXCHANGE, job.channel(), job);
-                    repository.markPublished(event.eventId());
-                    published++;
-                } catch (RuntimeException exception) {
-                    repository.markFailed(event, exception.getMessage());
-                    failed++;
+            Timer.Sample batchTimer = Timer.start(meterRegistry);
+            try {
+                List<OutboxEvent> events = Timer.builder("outbox_lock_wait_duration_seconds")
+                        .register(meterRegistry)
+                        .record(() -> repository.claim(batchSize, Duration.ofMinutes(5)));
+                batchSizeSummary.record(events.size());
+                int published = 0;
+                int failed = 0;
+                for (OutboxEvent event : events) {
+                    MDC.put("eventId", event.eventId().toString());
+                    try {
+                        DeliveryJob job = DeliveryJob.from(event);
+                        MDC.put("notificationId", job.notificationId().toString());
+                        MDC.put("channel", job.channel());
+                        rabbitTemplate.convertAndSend(DELIVERY_EXCHANGE, job.channel(), job, message -> {
+                            message.getMessageProperties().setHeader("X-Correlation-Id", job.correlationId());
+                            message.getMessageProperties().setHeader("correlationId", job.correlationId());
+                            message.getMessageProperties().setHeader("eventId", job.eventId().toString());
+                            message.getMessageProperties().setHeader("notificationId", job.notificationId().toString());
+                            return message;
+                        });
+                        repository.markPublished(event.eventId());
+                        meterRegistry.counter("outbox_published_total").increment();
+                        published++;
+                    } catch (RuntimeException exception) {
+                        repository.markFailed(event, exception.getMessage());
+                        meterRegistry.counter("outbox_failed_total").increment();
+                        if (event.attemptCount() >= event.maxAttempts()) {
+                            // outbox_dead_letter_total is a gauge backed by the database state.
+                        } else {
+                            meterRegistry.counter("outbox_retry_scheduled_total").increment();
+                        }
+                        failed++;
+                    } finally {
+                        MDC.remove("eventId");
+                        MDC.remove("notificationId");
+                        MDC.remove("channel");
+                    }
                 }
+                return new PublishResult(events.size(), published, failed);
+            } finally {
+                batchTimer.stop(Timer.builder("outbox_publish_duration_seconds").register(meterRegistry));
             }
-            return new PublishResult(events.size(), published, failed);
         }
     }
 
@@ -254,6 +297,22 @@ public class OutboxPublisherServiceApplication {
                 return null;
             }
             return error.length() > 1_000 ? error.substring(0, 1_000) : error;
+        }
+
+        int countStatus(String status) {
+            Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM outbox_events WHERE status = ?", Integer.class, status);
+            return count == null ? 0 : count;
+        }
+
+        double oldestPendingAgeSeconds() {
+            Instant createdAt = jdbc.query("""
+                    SELECT created_at
+                    FROM outbox_events
+                    WHERE status = 'PENDING'
+                    ORDER BY created_at
+                    LIMIT 1
+                    """, rs -> rs.next() ? rs.getTimestamp("created_at").toInstant() : null);
+            return createdAt == null ? 0.0 : Duration.between(createdAt, Instant.now()).toSeconds();
         }
 
         private OutboxEvent map(ResultSet rs, int rowNum) throws SQLException {

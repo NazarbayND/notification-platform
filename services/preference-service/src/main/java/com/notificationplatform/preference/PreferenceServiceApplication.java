@@ -1,5 +1,7 @@
 package com.notificationplatform.preference;
 
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import java.sql.ResultSet;
@@ -48,9 +50,11 @@ public class PreferenceServiceApplication {
     @RequestMapping("/preferences")
     static class PreferenceController {
         private final PreferenceRepository repository;
+        private final MeterRegistry meterRegistry;
 
-        PreferenceController(PreferenceRepository repository) {
+        PreferenceController(PreferenceRepository repository, MeterRegistry meterRegistry) {
             this.repository = repository;
+            this.meterRegistry = meterRegistry;
         }
 
         @GetMapping
@@ -83,7 +87,11 @@ public class PreferenceServiceApplication {
                 @RequestParam String userId,
                 @RequestParam String productId,
                 @RequestParam String channel) {
-            return repository.decision(userId, productId, channel.toUpperCase());
+            PreferenceDecision decision = Timer.builder("preference_check_duration_seconds")
+                    .register(meterRegistry)
+                    .record(() -> repository.decision(userId, productId, channel.toUpperCase()));
+            meterRegistry.counter("preference_check_total", "allowed", String.valueOf(decision.allowed())).increment();
+            return decision;
         }
     }
 

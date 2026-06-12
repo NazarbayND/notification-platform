@@ -1,3 +1,13 @@
+x-observability-env: &observability-env
+  ENVIRONMENT: local
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  OTEL_TRACES_EXPORTER: otlp
+  OTEL_METRICS_EXPORTER: none
+  OTEL_LOGS_EXPORTER: none
+  OTEL_RESOURCE_ATTRIBUTES: deployment.environment=local,service.namespace=notification-platform
+  MANAGEMENT_OTLP_TRACING_ENDPOINT: http://otel-collector:4318/v1/traces
+  MANAGEMENT_TRACING_SAMPLING_PROBABILITY: 1.0
+
 services:
   postgres:
     image: postgres:16
@@ -60,6 +70,8 @@ services:
       context: ./services/notification-api-service
     image: notification-platform/notification-api-service:local
     environment:
+      <<: *observability-env
+      OTEL_SERVICE_NAME: notification-api-service
       SERVER_PORT: 8081
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/notification_platform?currentSchema=notification_api
       SPRING_DATASOURCE_USERNAME: notification
@@ -84,6 +96,8 @@ services:
       context: ./services/template-service
     image: notification-platform/template-service:local
     environment:
+      <<: *observability-env
+      OTEL_SERVICE_NAME: template-service
       SERVER_PORT: 8082
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/notification_platform?currentSchema=template
       SPRING_DATASOURCE_USERNAME: notification
@@ -102,6 +116,8 @@ services:
       context: ./services/preference-service
     image: notification-platform/preference-service:local
     environment:
+      <<: *observability-env
+      OTEL_SERVICE_NAME: preference-service
       SERVER_PORT: 8083
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/notification_platform?currentSchema=preference
       SPRING_DATASOURCE_USERNAME: notification
@@ -124,6 +140,8 @@ services:
       context: ./services/outbox-publisher-service
     image: notification-platform/outbox-publisher-service:local
     environment:
+      <<: *observability-env
+      OTEL_SERVICE_NAME: outbox-publisher-service
       SERVER_PORT: 8084
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/notification_platform?currentSchema=notification_api
       SPRING_DATASOURCE_USERNAME: notification
@@ -152,6 +170,8 @@ services:
       context: ./services/email-worker-service
     image: notification-platform/email-worker-service:local
     environment:
+      <<: *observability-env
+      OTEL_SERVICE_NAME: email-worker-service
       SERVER_PORT: 8085
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/notification_platform?currentSchema=delivery_email
       SPRING_DATASOURCE_USERNAME: notification
@@ -180,6 +200,8 @@ services:
       context: ./services/sms-worker-service
     image: notification-platform/sms-worker-service:local
     environment:
+      <<: *observability-env
+      OTEL_SERVICE_NAME: sms-worker-service
       SERVER_PORT: 8086
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/notification_platform?currentSchema=delivery_sms
       SPRING_DATASOURCE_USERNAME: notification
@@ -206,6 +228,8 @@ services:
       context: ./services/push-worker-service
     image: notification-platform/push-worker-service:local
     environment:
+      <<: *observability-env
+      OTEL_SERVICE_NAME: push-worker-service
       SERVER_PORT: 8087
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/notification_platform?currentSchema=delivery_push
       SPRING_DATASOURCE_USERNAME: notification
@@ -232,6 +256,8 @@ services:
       context: ./services/in-app-worker-service
     image: notification-platform/in-app-worker-service:local
     environment:
+      <<: *observability-env
+      OTEL_SERVICE_NAME: in-app-worker-service
       SERVER_PORT: 8089
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/notification_platform?currentSchema=delivery_in_app
       SPRING_DATASOURCE_USERNAME: notification
@@ -258,6 +284,8 @@ services:
       context: ./services/webhook-worker-service
     image: notification-platform/webhook-worker-service:local
     environment:
+      <<: *observability-env
+      OTEL_SERVICE_NAME: webhook-worker-service
       SERVER_PORT: 8090
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/notification_platform?currentSchema=delivery_webhook
       SPRING_DATASOURCE_USERNAME: notification
@@ -284,6 +312,8 @@ services:
       context: ./services/admin-bff-service
     image: notification-platform/admin-bff-service:local
     environment:
+      <<: *observability-env
+      OTEL_SERVICE_NAME: admin-bff-service
       SERVER_PORT: 8088
       NOTIFICATION_API_URL: http://notification-api-service:8081
       TEMPLATE_SERVICE_URL: http://template-service:8082
@@ -316,7 +346,94 @@ services:
     depends_on:
       - admin-bff-service
 
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: notification-platform-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --web.enable-lifecycle
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - notification-api-service
+      - template-service
+      - preference-service
+      - outbox-publisher-service
+      - email-worker-service
+      - sms-worker-service
+      - push-worker-service
+      - in-app-worker-service
+      - webhook-worker-service
+      - admin-bff-service
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: notification-platform-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+      - loki
+      - jaeger
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.63.0
+    container_name: notification-platform-jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"
+      - "4317"
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.114.0
+    container_name: notification-platform-otel-collector
+    command: ["--config=/etc/otelcol-contrib/config.yml"]
+    volumes:
+      - ./observability/otel/otel-collector.yml:/etc/otelcol-contrib/config.yml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "8888:8888"
+    depends_on:
+      - jaeger
+
+  loki:
+    image: grafana/loki:3.3.0
+    container_name: notification-platform-loki
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    volumes:
+      - ./observability/loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    ports:
+      - "3100:3100"
+
+  promtail:
+    image: grafana/promtail:3.3.0
+    container_name: notification-platform-promtail
+    command: ["-config.file=/etc/promtail/config.yml"]
+    volumes:
+      - ./observability/promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    depends_on:
+      - loki
+
 volumes:
   microservices-postgres-data:
   microservices-rabbitmq-data:
   microservices-redis-data:
+  grafana-data:
+  loki-data:

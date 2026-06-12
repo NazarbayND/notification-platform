@@ -1,5 +1,7 @@
 package com.notificationplatform.inappworker;
 
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import java.sql.ResultSet;
@@ -15,6 +17,7 @@ import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.BindingBuilder;
 import org.springframework.amqp.core.DirectExchange;
 import org.springframework.amqp.core.Queue;
+import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.beans.factory.annotation.Value;
@@ -25,6 +28,7 @@ import org.springframework.context.annotation.Primary;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.slf4j.MDC;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -141,14 +145,50 @@ public class InAppWorkerServiceApplication {
     @org.springframework.stereotype.Component
     static class InAppDeliveryConsumer {
         private final DbInAppProvider provider;
+        private final MeterRegistry meterRegistry;
 
-        InAppDeliveryConsumer(DbInAppProvider provider) {
+        InAppDeliveryConsumer(DbInAppProvider provider, MeterRegistry meterRegistry) {
             this.provider = provider;
+            this.meterRegistry = meterRegistry;
         }
 
         @RabbitListener(queues = IN_APP_QUEUE)
-        void consume(DeliveryJob job) {
-            provider.createFromJob(job);
+        void consume(DeliveryJob job, @Header(name = "X-Correlation-Id", required = false) String correlationId) {
+            Timer.Sample processingTimer = Timer.start(meterRegistry);
+            meterRegistry.counter("worker_messages_consumed_total", "service", "in-app-worker-service", "channel", "IN_APP").increment();
+            putContext(job, correlationId);
+            try {
+                ProviderResult result = provider.createFromJob(job);
+                if (result == null) {
+                    meterRegistry.counter("worker_duplicate_events_skipped_total", "service", "in-app-worker-service", "channel", "IN_APP").increment();
+                    return;
+                }
+                meterRegistry.counter("worker_messages_processed_total", "service", "in-app-worker-service", "channel", "IN_APP", "status", result.status()).increment();
+                meterRegistry.counter("delivery_attempt_total", "channel", "IN_APP", "provider", result.provider(), "status", result.status()).increment();
+                if (!"SENT".equals(result.status())) {
+                    meterRegistry.counter("provider_error_total", "channel", "IN_APP", "provider", result.provider(), "error_code", String.valueOf(result.errorCode())).increment();
+                }
+            } catch (RuntimeException exception) {
+                meterRegistry.counter("worker_messages_failed_total", "service", "in-app-worker-service", "channel", "IN_APP", "reason", exception.getClass().getSimpleName()).increment();
+                throw exception;
+            } finally {
+                processingTimer.stop(Timer.builder("worker_processing_duration_seconds")
+                        .tag("service", "in-app-worker-service")
+                        .tag("channel", "IN_APP")
+                        .register(meterRegistry));
+                MDC.clear();
+            }
+        }
+
+        private void putContext(DeliveryJob job, String correlationId) {
+            if (correlationId != null && !correlationId.isBlank()) {
+                MDC.put("correlationId", correlationId);
+            } else if (job.correlationId() != null && !job.correlationId().isBlank()) {
+                MDC.put("correlationId", job.correlationId());
+            }
+            MDC.put("eventId", String.valueOf(job.eventId()));
+            MDC.put("notificationId", String.valueOf(job.notificationId()));
+            MDC.put("channel", "IN_APP");
         }
     }
 
@@ -234,9 +274,9 @@ public class InAppWorkerServiceApplication {
         }
 
         @Transactional
-        void createFromJob(DeliveryJob job) {
+        ProviderResult createFromJob(DeliveryJob job) {
             if (!markProcessing(job.eventId())) {
-                return;
+                return null;
             }
             ProviderResult result = createInAppNotification(new CreateInAppNotificationCommand(
                     job.destination(), job.subject(), job.body(), job.eventId().toString(), job.notificationId().toString()));
@@ -252,6 +292,7 @@ public class InAppWorkerServiceApplication {
                         result.provider(), result.providerMessageId(), result.status(), "{\"stored\":true}",
                         result.errorCode(), result.errorMessage(), ts(result.sentAt()), ts(Instant.now()));
             }
+            return result;
         }
 
         private boolean markProcessing(UUID eventId) {

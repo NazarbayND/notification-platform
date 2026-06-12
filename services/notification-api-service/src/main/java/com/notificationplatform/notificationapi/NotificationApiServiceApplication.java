@@ -1,6 +1,8 @@
 package com.notificationplatform.notificationapi;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import java.sql.ResultSet;
@@ -9,6 +11,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -101,124 +104,153 @@ public class NotificationApiServiceApplication {
         private final ObjectMapper objectMapper;
         private final RestClient templateClient;
         private final RestClient preferenceClient;
+        private final MeterRegistry meterRegistry;
 
         NotificationSubmissionService(
                 NotificationRepository repository,
                 ObjectMapper objectMapper,
                 RestClient.Builder restClientBuilder,
+                MeterRegistry meterRegistry,
                 @Value("${TEMPLATE_SERVICE_URL:http://localhost:8082}") String templateServiceUrl,
                 @Value("${PREFERENCE_SERVICE_URL:http://localhost:8083}") String preferenceServiceUrl) {
             this.repository = repository;
             this.objectMapper = objectMapper;
+            this.meterRegistry = meterRegistry;
             this.templateClient = restClientBuilder.baseUrl(templateServiceUrl).build();
             this.preferenceClient = restClientBuilder.baseUrl(preferenceServiceUrl).build();
         }
 
         @Transactional
         NotificationAccepted submit(NotificationRequest request, String correlationId) {
+            Timer.Sample requestTimer = Timer.start(meterRegistry);
             String channel = request.channel().toUpperCase();
-            PreferenceDecision preference = preferenceClient.get()
-                    .uri(uri -> uri.path("/preferences/check")
-                            .queryParam("userId", request.userId())
-                            .queryParam("productId", request.productId())
-                            .queryParam("channel", channel)
-                            .build())
-                    .retrieve()
-                    .body(PreferenceDecision.class);
+            String priority = normalizePriority(request.priority());
+            MDC.put("channel", channel);
+            try {
+                PreferenceDecision preference = Timer.builder("preference_check_duration_seconds")
+                        .description("Duration of synchronous preference checks")
+                        .register(meterRegistry)
+                        .record(() -> preferenceClient.get()
+                                .uri(uri -> uri.path("/preferences/check")
+                                        .queryParam("userId", request.userId())
+                                        .queryParam("productId", request.productId())
+                                        .queryParam("channel", channel)
+                                        .build())
+                                .retrieve()
+                                .body(PreferenceDecision.class));
 
-            UUID notificationId = UUID.randomUUID();
-            Instant now = Instant.now();
-            if (preference == null || !preference.allowed()) {
-                NotificationRecord skipped = new NotificationRecord(
+                UUID notificationId = UUID.randomUUID();
+                MDC.put("notificationId", notificationId.toString());
+                Instant now = Instant.now();
+                if (preference == null || !preference.allowed()) {
+                    meterRegistry.counter("notification_rejected_total", "reason", "preference_denied").increment();
+                    NotificationRecord skipped = new NotificationRecord(
+                            notificationId,
+                            request.productId(),
+                            request.userId(),
+                            channel,
+                            request.templateKey(),
+                            priority,
+                            "SKIPPED",
+                            request.idempotencyKey(),
+                            request.destination(),
+                            request.variables() == null ? Map.of() : request.variables(),
+                            correlationId,
+                            now,
+                            now);
+                    NotificationRecord saved = repository.insertNotification(skipped);
+                    return new NotificationAccepted(saved.id(), saved.status(), correlationId, channel, null);
+                }
+
+                RenderedTemplate rendered = Timer.builder("template_render_duration_seconds")
+                        .description("Duration of synchronous template render calls")
+                        .register(meterRegistry)
+                        .record(() -> templateClient.post()
+                                .uri("/templates/render")
+                                .body(new RenderTemplateRequest(request.productId(), request.templateKey(), channel, request.variables()))
+                                .retrieve()
+                                .body(RenderedTemplate.class));
+                if (rendered == null) {
+                    meterRegistry.counter("notification_rejected_total", "reason", "template_empty_response").increment();
+                    throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Template service returned no rendered template");
+                }
+
+                NotificationRecord record = new NotificationRecord(
                         notificationId,
                         request.productId(),
                         request.userId(),
                         channel,
                         request.templateKey(),
-                        normalizePriority(request.priority()),
-                        "SKIPPED",
+                        priority,
+                        "ACCEPTED",
                         request.idempotencyKey(),
                         request.destination(),
                         request.variables() == null ? Map.of() : request.variables(),
                         correlationId,
                         now,
                         now);
-                NotificationRecord saved = repository.insertNotification(skipped);
-                return new NotificationAccepted(saved.id(), saved.status(), correlationId, channel, null);
+
+                try {
+                    repository.insertNotification(record);
+                } catch (DuplicateKeyException duplicate) {
+                    meterRegistry.counter("notification_rejected_total", "reason", "duplicate_idempotency_key").increment();
+                    NotificationRecord existing = repository.findByProductIdAndIdempotencyKey(request.productId(), request.idempotencyKey());
+                    return new NotificationAccepted(existing.id(), existing.status(), correlationId, existing.channel(), null);
+                }
+
+                UUID deliveryId = UUID.randomUUID();
+                repository.insertDelivery(new DeliveryRecord(
+                        deliveryId,
+                        notificationId,
+                        channel,
+                        request.destination(),
+                        rendered.subject(),
+                        rendered.body(),
+                        "PENDING",
+                        0,
+                        5,
+                        now,
+                        now));
+
+                UUID eventId = UUID.randomUUID();
+                MDC.put("eventId", eventId.toString());
+                repository.insertOutbox(new OutboxEvent(
+                        eventId,
+                        "Notification",
+                        notificationId.toString(),
+                        "NotificationAccepted",
+                        Map.of(
+                                "eventId", eventId.toString(),
+                                "notificationId", notificationId.toString(),
+                                "deliveryId", deliveryId.toString(),
+                                "channel", channel,
+                                "destination", request.destination(),
+                                "subject", rendered.subject(),
+                                "body", rendered.body(),
+                                "priority", priority,
+                                "correlationId", correlationId),
+                        "PENDING",
+                        0,
+                        10,
+                        null,
+                        now,
+                        null,
+                        null,
+                        now,
+                        now));
+
+                meterRegistry.counter("notification_created_total", "channel", channel, "priority", priority).increment();
+                return new NotificationAccepted(notificationId, "ACCEPTED", correlationId, channel, eventId);
+            } finally {
+                requestTimer.stop(Timer.builder("notification_request_duration_seconds")
+                        .description("Notification submission duration")
+                        .tag("channel", channel)
+                        .tag("priority", priority)
+                        .register(meterRegistry));
+                MDC.remove("channel");
+                MDC.remove("notificationId");
+                MDC.remove("eventId");
             }
-
-            RenderedTemplate rendered = templateClient.post()
-                    .uri("/templates/render")
-                    .body(new RenderTemplateRequest(request.productId(), request.templateKey(), channel, request.variables()))
-                    .retrieve()
-                    .body(RenderedTemplate.class);
-            if (rendered == null) {
-                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Template service returned no rendered template");
-            }
-
-            NotificationRecord record = new NotificationRecord(
-                    notificationId,
-                    request.productId(),
-                    request.userId(),
-                    channel,
-                    request.templateKey(),
-                    normalizePriority(request.priority()),
-                    "ACCEPTED",
-                    request.idempotencyKey(),
-                    request.destination(),
-                    request.variables() == null ? Map.of() : request.variables(),
-                    correlationId,
-                    now,
-                    now);
-
-            try {
-                repository.insertNotification(record);
-            } catch (DuplicateKeyException duplicate) {
-                NotificationRecord existing = repository.findByProductIdAndIdempotencyKey(request.productId(), request.idempotencyKey());
-                return new NotificationAccepted(existing.id(), existing.status(), correlationId, existing.channel(), null);
-            }
-
-            UUID deliveryId = UUID.randomUUID();
-            repository.insertDelivery(new DeliveryRecord(
-                    deliveryId,
-                    notificationId,
-                    channel,
-                    request.destination(),
-                    rendered.subject(),
-                    rendered.body(),
-                    "PENDING",
-                    0,
-                    5,
-                    now,
-                    now));
-
-            UUID eventId = UUID.randomUUID();
-            repository.insertOutbox(new OutboxEvent(
-                    eventId,
-                    "Notification",
-                    notificationId.toString(),
-                    "NotificationAccepted",
-                    Map.of(
-                            "eventId", eventId.toString(),
-                            "notificationId", notificationId.toString(),
-                            "deliveryId", deliveryId.toString(),
-                            "channel", channel,
-                            "destination", request.destination(),
-                            "subject", rendered.subject(),
-                            "body", rendered.body(),
-                            "priority", normalizePriority(request.priority()),
-                            "correlationId", correlationId),
-                    "PENDING",
-                    0,
-                    10,
-                    null,
-                    now,
-                    null,
-                    null,
-                    now,
-                    now));
-
-            return new NotificationAccepted(notificationId, "ACCEPTED", correlationId, channel, eventId);
         }
 
         private String normalizePriority(String priority) {

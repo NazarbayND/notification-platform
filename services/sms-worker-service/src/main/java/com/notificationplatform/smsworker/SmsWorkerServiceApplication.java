@@ -1,6 +1,8 @@
 package com.notificationplatform.smsworker;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import java.sql.ResultSet;
@@ -14,6 +16,7 @@ import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.BindingBuilder;
 import org.springframework.amqp.core.DirectExchange;
 import org.springframework.amqp.core.Queue;
+import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.beans.factory.annotation.Value;
@@ -34,6 +37,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import org.slf4j.MDC;
 
 @SpringBootApplication
 public class SmsWorkerServiceApplication {
@@ -127,20 +131,66 @@ public class SmsWorkerServiceApplication {
     static class SmsDeliveryConsumer {
         private final DeliveryRepository repository;
         private final SmsProvider provider;
+        private final MeterRegistry meterRegistry;
 
-        SmsDeliveryConsumer(DeliveryRepository repository, SmsProvider provider) {
+        SmsDeliveryConsumer(DeliveryRepository repository, SmsProvider provider, MeterRegistry meterRegistry) {
             this.repository = repository;
             this.provider = provider;
+            this.meterRegistry = meterRegistry;
         }
 
         @RabbitListener(queues = SMS_QUEUE)
-        void consume(DeliveryJob job) {
-            if (!repository.markProcessing(job.eventId())) {
-                return;
+        void consume(DeliveryJob job, @Header(name = "X-Correlation-Id", required = false) String correlationId) {
+            Timer.Sample processingTimer = Timer.start(meterRegistry);
+            meterRegistry.counter("worker_messages_consumed_total", "service", "sms-worker-service", "channel", "SMS").increment();
+            putMdc(job, correlationId);
+            try {
+                if (!repository.markProcessing(job.eventId())) {
+                    meterRegistry.counter("worker_duplicate_events_skipped_total", "service", "sms-worker-service", "channel", "SMS").increment();
+                    return;
+                }
+                ProviderResult result = Timer.builder("provider_request_duration_seconds")
+                        .tag("channel", "SMS")
+                        .tag("provider", "test-sms")
+                        .register(meterRegistry)
+                        .record(() -> provider.sendSms(new SendSmsCommand(
+                                job.destination(), job.body(), job.eventId().toString(), job.notificationId().toString())));
+                repository.saveAttempt(job, result);
+                meterRegistry.counter("worker_messages_processed_total", "service", "sms-worker-service", "channel", "SMS").increment();
+                meterRegistry.counter("delivery_attempt_total", "channel", "SMS", "provider", result.provider(), "status", result.status()).increment();
+                if (!"SENT".equals(result.status())) {
+                    meterRegistry.counter("provider_error_total", "channel", "SMS", "provider", result.provider(), "errorCode", nullToUnknown(result.errorCode())).increment();
+                }
+            } catch (RuntimeException exception) {
+                meterRegistry.counter("worker_messages_failed_total", "service", "sms-worker-service", "channel", "SMS", "reason", exception.getClass().getSimpleName()).increment();
+                throw exception;
+            } finally {
+                processingTimer.stop(Timer.builder("worker_processing_duration_seconds")
+                        .tag("service", "sms-worker-service")
+                        .tag("channel", "SMS")
+                        .register(meterRegistry));
+                clearMdc();
             }
-            ProviderResult result = provider.sendSms(new SendSmsCommand(
-                    job.destination(), job.body(), job.eventId().toString(), job.notificationId().toString()));
-            repository.saveAttempt(job, result);
+        }
+
+        private void putMdc(DeliveryJob job, String correlationId) {
+            if (correlationId != null && !correlationId.isBlank()) {
+                MDC.put("correlationId", correlationId);
+            }
+            MDC.put("eventId", job.eventId().toString());
+            MDC.put("notificationId", job.notificationId().toString());
+            MDC.put("channel", "SMS");
+        }
+
+        private void clearMdc() {
+            MDC.remove("correlationId");
+            MDC.remove("eventId");
+            MDC.remove("notificationId");
+            MDC.remove("channel");
+        }
+
+        private String nullToUnknown(String value) {
+            return value == null || value.isBlank() ? "unknown" : value;
         }
     }
 

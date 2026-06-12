@@ -1,5 +1,7 @@
 package com.notificationplatform.webhookworker;
 
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -19,6 +21,7 @@ import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.BindingBuilder;
 import org.springframework.amqp.core.DirectExchange;
 import org.springframework.amqp.core.Queue;
+import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.beans.factory.annotation.Value;
@@ -28,6 +31,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.slf4j.MDC;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -137,21 +141,66 @@ public class WebhookWorkerServiceApplication {
     static class WebhookDeliveryConsumer {
         private final WebhookDeliveryRepository repository;
         private final WebhookProvider provider;
+        private final MeterRegistry meterRegistry;
 
-        WebhookDeliveryConsumer(WebhookDeliveryRepository repository, WebhookProvider provider) {
+        WebhookDeliveryConsumer(WebhookDeliveryRepository repository, WebhookProvider provider, MeterRegistry meterRegistry) {
             this.repository = repository;
             this.provider = provider;
+            this.meterRegistry = meterRegistry;
         }
 
         @RabbitListener(queues = WEBHOOK_QUEUE)
-        void consume(DeliveryJob job) {
-            if (!repository.markProcessing(job.eventId())) {
-                return;
+        void consume(DeliveryJob job, @Header(name = "X-Correlation-Id", required = false) String correlationId) {
+            Timer.Sample processingTimer = Timer.start(meterRegistry);
+            meterRegistry.counter("worker_messages_consumed_total", "service", "webhook-worker-service", "channel", "WEBHOOK").increment();
+            putContext(job, correlationId);
+            try {
+                if (!repository.markProcessing(job.eventId())) {
+                    meterRegistry.counter("worker_duplicate_events_skipped_total", "service", "webhook-worker-service", "channel", "WEBHOOK").increment();
+                    return;
+                }
+                ProviderResult result = Timer.builder("provider_request_duration_seconds")
+                        .tag("channel", "WEBHOOK")
+                        .tag("provider", "test-webhook")
+                        .register(meterRegistry)
+                        .record(() -> provider.sendWebhook(new SendWebhookCommand(
+                                job.destination(), "POST", Map.of("x-correlation-id", effectiveCorrelationId(job, correlationId)), job.body(),
+                                job.eventId().toString(), job.notificationId().toString())));
+                repository.saveAttempt(job, result);
+                meterRegistry.counter("webhook_request_total", "status", result.status()).increment();
+                meterRegistry.counter("worker_messages_processed_total", "service", "webhook-worker-service", "channel", "WEBHOOK", "status", result.status()).increment();
+                meterRegistry.counter("delivery_attempt_total", "channel", "WEBHOOK", "provider", result.provider(), "status", result.status()).increment();
+                if (!"SENT".equals(result.status())) {
+                    meterRegistry.counter("provider_error_total", "channel", "WEBHOOK", "provider", result.provider(), "error_code", String.valueOf(result.errorCode())).increment();
+                    meterRegistry.counter("webhook_retry_total", "error_code", String.valueOf(result.errorCode())).increment();
+                }
+            } catch (RuntimeException exception) {
+                meterRegistry.counter("worker_messages_failed_total", "service", "webhook-worker-service", "channel", "WEBHOOK", "reason", exception.getClass().getSimpleName()).increment();
+                throw exception;
+            } finally {
+                processingTimer.stop(Timer.builder("worker_processing_duration_seconds")
+                        .tag("service", "webhook-worker-service")
+                        .tag("channel", "WEBHOOK")
+                        .register(meterRegistry));
+                MDC.clear();
             }
-            ProviderResult result = provider.sendWebhook(new SendWebhookCommand(
-                    job.destination(), "POST", Map.of("x-correlation-id", job.correlationId()), job.body(),
-                    job.eventId().toString(), job.notificationId().toString()));
-            repository.saveAttempt(job, result);
+        }
+
+        private String effectiveCorrelationId(DeliveryJob job, String correlationId) {
+            if (correlationId != null && !correlationId.isBlank()) {
+                return correlationId;
+            }
+            return job.correlationId() == null ? "" : job.correlationId();
+        }
+
+        private void putContext(DeliveryJob job, String correlationId) {
+            String effectiveCorrelationId = effectiveCorrelationId(job, correlationId);
+            if (!effectiveCorrelationId.isBlank()) {
+                MDC.put("correlationId", effectiveCorrelationId);
+            }
+            MDC.put("eventId", String.valueOf(job.eventId()));
+            MDC.put("notificationId", String.valueOf(job.notificationId()));
+            MDC.put("channel", "WEBHOOK");
         }
     }
 

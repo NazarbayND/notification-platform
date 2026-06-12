@@ -2,6 +2,8 @@ package com.notificationplatform.template;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import java.sql.ResultSet;
@@ -51,9 +53,11 @@ public class TemplateServiceApplication {
     @RequestMapping("/templates")
     static class TemplateController {
         private final TemplateRepository repository;
+        private final MeterRegistry meterRegistry;
 
-        TemplateController(TemplateRepository repository) {
+        TemplateController(TemplateRepository repository, MeterRegistry meterRegistry) {
             this.repository = repository;
+            this.meterRegistry = meterRegistry;
         }
 
         @GetMapping
@@ -107,18 +111,36 @@ public class TemplateServiceApplication {
         }
 
         private RenderedTemplate render(Template template, Map<String, Object> variables) {
-            Map<String, Object> safeVariables = variables == null ? Map.of() : variables;
-            List<String> missing = template.requiredVariables().stream()
-                    .filter(required -> !safeVariables.containsKey(required))
-                    .toList();
-            if (!missing.isEmpty()) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Missing template variables: " + missing);
+            Timer.Sample sample = Timer.start(meterRegistry);
+            String status = "success";
+            try {
+                Map<String, Object> safeVariables = variables == null ? Map.of() : variables;
+                List<String> missing = template.requiredVariables().stream()
+                        .filter(required -> !safeVariables.containsKey(required))
+                        .toList();
+                if (!missing.isEmpty()) {
+                    status = "validation_failed";
+                    meterRegistry.counter("template_validation_failed_total").increment();
+                    meterRegistry.counter("template_render_total", "status", status).increment();
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Missing template variables: " + missing);
+                }
+                meterRegistry.counter("template_render_total", "status", status).increment();
+                return new RenderedTemplate(
+                        template.id(),
+                        renderText(template.subject(), safeVariables),
+                        renderText(template.body(), safeVariables),
+                        missing);
+            } catch (RuntimeException exception) {
+                if (!"validation_failed".equals(status)) {
+                    status = "error";
+                    meterRegistry.counter("template_render_total", "status", status).increment();
+                }
+                throw exception;
+            } finally {
+                sample.stop(Timer.builder("template_render_duration_seconds")
+                        .tag("status", status)
+                        .register(meterRegistry));
             }
-            return new RenderedTemplate(
-                    template.id(),
-                    renderText(template.subject(), safeVariables),
-                    renderText(template.body(), safeVariables),
-                    missing);
         }
 
         private String renderText(String source, Map<String, Object> variables) {
