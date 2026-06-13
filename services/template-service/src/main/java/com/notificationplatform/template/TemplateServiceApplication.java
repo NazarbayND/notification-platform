@@ -9,6 +9,7 @@ import jakarta.validation.constraints.NotBlank;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.util.Locale;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -50,6 +51,42 @@ public class TemplateServiceApplication {
     }
 
     @RestController
+    @RequestMapping("/products")
+    static class ProductController {
+        private final ProductRepository repository;
+
+        ProductController(ProductRepository repository) {
+            this.repository = repository;
+        }
+
+        @GetMapping
+        List<Product> list() {
+            return repository.findAll();
+        }
+
+        @PostMapping
+        @ResponseStatus(HttpStatus.CREATED)
+        Product create(@Valid @RequestBody ProductRequest request) {
+            Instant now = Instant.now();
+            String id = normalizeProductId(request.id(), request.name());
+            Product product = new Product(id, request.name().trim(), normalizeProductStatus(request.status()), now, now);
+            return repository.create(product);
+        }
+
+        @PutMapping("/{id}")
+        Product update(@PathVariable String id, @Valid @RequestBody ProductRequest request) {
+            Product existing = repository.findById(id);
+            Product updated = new Product(
+                    existing.id(),
+                    request.name().trim(),
+                    normalizeProductStatus(request.status()),
+                    existing.createdAt(),
+                    Instant.now());
+            return repository.update(updated);
+        }
+    }
+
+    @RestController
     @RequestMapping("/templates")
     static class TemplateController {
         private final TemplateRepository repository;
@@ -76,7 +113,7 @@ public class TemplateServiceApplication {
                     request.subject(),
                     request.body(),
                     request.requiredVariables() == null ? List.of() : request.requiredVariables(),
-                    "ACTIVE",
+                    normalizeStatus(request.status()),
                     Instant.now(),
                     Instant.now());
             return repository.save(template);
@@ -93,7 +130,7 @@ public class TemplateServiceApplication {
                     request.subject(),
                     request.body(),
                     request.requiredVariables() == null ? List.of() : request.requiredVariables(),
-                    "ACTIVE",
+                    normalizeStatus(request.status()),
                     existing.createdAt(),
                     Instant.now());
             return repository.update(updated);
@@ -150,6 +187,88 @@ public class TemplateServiceApplication {
             }
             return rendered;
         }
+
+        private String normalizeStatus(String status) {
+            if (status == null || status.isBlank()) {
+                return "ACTIVE";
+            }
+            String normalized = status.toUpperCase();
+            if (!List.of("DRAFT", "ACTIVE", "ARCHIVED").contains(normalized)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unsupported template status: " + status);
+            }
+            return normalized;
+        }
+    }
+
+    @Repository
+    static class ProductRepository {
+        private final JdbcTemplate jdbc;
+
+        ProductRepository(JdbcTemplate jdbc) {
+            this.jdbc = jdbc;
+        }
+
+        List<Product> findAll() {
+            return jdbc.query("""
+                    SELECT id, name, status, created_at, updated_at
+                    FROM notification_products
+                    ORDER BY name ASC
+                    """, this::map);
+        }
+
+        Product findById(String id) {
+            try {
+                return jdbc.queryForObject("""
+                        SELECT id, name, status, created_at, updated_at
+                        FROM notification_products
+                        WHERE id = ?
+                        """, this::map, id);
+            } catch (EmptyResultDataAccessException exception) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Product not found: " + id);
+            }
+        }
+
+        @Transactional
+        Product create(Product product) {
+            try {
+                jdbc.update("""
+                        INSERT INTO notification_products (id, name, status, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?)
+                        """, product.id(), product.name(), product.status(), ts(product.createdAt()), ts(product.updatedAt()));
+                return product;
+            } catch (org.springframework.dao.DuplicateKeyException exception) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Product already exists: " + product.id());
+            }
+        }
+
+        @Transactional
+        Product update(Product product) {
+            jdbc.update("""
+                    UPDATE notification_products
+                    SET name = ?, status = ?, updated_at = ?
+                    WHERE id = ?
+                    """, product.name(), product.status(), ts(product.updatedAt()), product.id());
+            return product;
+        }
+
+        @Transactional
+        void ensureExists(String productId) {
+            Instant now = Instant.now();
+            jdbc.update("""
+                    INSERT INTO notification_products (id, name, status, created_at, updated_at)
+                    VALUES (?, ?, 'ACTIVE', ?, ?)
+                    ON CONFLICT (id) DO NOTHING
+                    """, productId, productId, ts(now), ts(now));
+        }
+
+        private Product map(ResultSet rs, int rowNum) throws SQLException {
+            return new Product(
+                    rs.getString("id"),
+                    rs.getString("name"),
+                    rs.getString("status"),
+                    rs.getTimestamp("created_at").toInstant(),
+                    rs.getTimestamp("updated_at").toInstant());
+        }
     }
 
     @Repository
@@ -159,10 +278,12 @@ public class TemplateServiceApplication {
 
         private final JdbcTemplate jdbc;
         private final ObjectMapper objectMapper;
+        private final ProductRepository productRepository;
 
-        TemplateRepository(JdbcTemplate jdbc, ObjectMapper objectMapper) {
+        TemplateRepository(JdbcTemplate jdbc, ObjectMapper objectMapper, ProductRepository productRepository) {
             this.jdbc = jdbc;
             this.objectMapper = objectMapper;
+            this.productRepository = productRepository;
         }
 
         List<Template> findAll() {
@@ -201,6 +322,7 @@ public class TemplateServiceApplication {
 
         @Transactional
         Template save(Template template) {
+            productRepository.ensureExists(template.productId());
             jdbc.update("""
                     INSERT INTO notification_templates (
                         id, product_id, template_key, channel, subject, body, required_variables, status, created_at, updated_at
@@ -214,6 +336,7 @@ public class TemplateServiceApplication {
 
         @Transactional
         Template update(Template template) {
+            productRepository.ensureExists(template.productId());
             jdbc.update("""
                     UPDATE notification_templates
                     SET product_id = ?, template_key = ?, channel = ?, subject = ?, body = ?, required_variables = ?::jsonb,
@@ -256,7 +379,47 @@ public class TemplateServiceApplication {
         }
     }
 
+    private static String normalizeProductId(String requestedId, String name) {
+        String source = requestedId == null || requestedId.isBlank() ? name : requestedId;
+        String normalized = source.trim()
+                .toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", "-")
+                .replaceAll("(^-|-$)", "");
+        if (normalized.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Product id could not be derived from name");
+        }
+        if (normalized.length() > 160) {
+            return normalized.substring(0, 160).replaceAll("-$", "");
+        }
+        return normalized;
+    }
+
+    private static String normalizeProductStatus(String status) {
+        if (status == null || status.isBlank()) {
+            return "ACTIVE";
+        }
+        String normalized = status.toUpperCase();
+        if (!List.of("ACTIVE", "DISABLED").contains(normalized)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unsupported product status: " + status);
+        }
+        return normalized;
+    }
+
     record Health(String status, Instant checkedAt) {
+    }
+
+    record Product(
+            String id,
+            String name,
+            String status,
+            Instant createdAt,
+            Instant updatedAt) {
+    }
+
+    record ProductRequest(
+            String id,
+            @NotBlank String name,
+            String status) {
     }
 
     record Template(
@@ -278,6 +441,7 @@ public class TemplateServiceApplication {
             @NotBlank String channel,
             @NotBlank String subject,
             @NotBlank String body,
+            String status,
             List<String> requiredVariables) {
     }
 

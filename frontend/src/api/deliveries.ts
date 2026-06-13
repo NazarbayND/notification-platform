@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { request } from "./http";
 import type { Channel, Delivery, DeliveryStatus } from "../types/api";
 
@@ -39,10 +39,12 @@ export function useDeliveries(filters: DeliveryFilters) {
 }
 
 export function useRetryDelivery() {
+  const queryClient = useQueryClient();
+
   return useMutation({
     mutationFn: async (deliveryId: string) => {
-      void deliveryId;
-      throw new Error("Delivery retry is handled through outbox event retry in the microservices BFF.");
-    }
+      await request(`/admin/outbox-events/${deliveryId}/retry`, { method: "POST" });
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["deliveries"] })
   });
 }

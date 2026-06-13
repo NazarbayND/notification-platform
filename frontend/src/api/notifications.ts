@@ -36,13 +36,22 @@ export function useNotifications(filters: NotificationFilters) {
       if (filters.status) {
         params.set("status", filters.status);
       }
+      if (filters.productId?.trim()) {
+        params.set("productId", filters.productId.trim());
+      }
+      if (filters.priority) {
+        params.set("priority", filters.priority);
+      }
+      if (filters.dateFrom) {
+        params.set("dateFrom", filters.dateFrom);
+      }
+      if (filters.dateTo) {
+        params.set("dateTo", filters.dateTo);
+      }
 
       const query = params.toString();
       const notifications = await request<MicroserviceNotification[]>(`/admin/notifications${query ? `?${query}` : ""}`);
-      return notifications
-        .filter((notification) => !filters.productId || notification.productId === filters.productId)
-        .filter((notification) => !filters.priority || notification.priority === filters.priority)
-        .map(toNotificationRequest);
+      return notifications.map(toNotificationRequest);
     }
   });
 }
@@ -99,6 +108,7 @@ export function useSendNotification() {
     },
     onSuccess: (notification) => {
       queryClient.setQueryData(notificationKeys.detail(notification.id), notification);
+      queryClient.invalidateQueries({ queryKey: ["notifications"] });
     }
   });
 }

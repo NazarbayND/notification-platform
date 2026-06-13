@@ -3,6 +3,8 @@ package com.notificationplatform.adminbff;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -20,6 +22,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
+import org.springframework.web.server.ResponseStatusException;
 
 @SpringBootApplication(exclude = DataSourceAutoConfiguration.class)
 public class AdminBffServiceApplication {
@@ -69,12 +73,16 @@ public class AdminBffServiceApplication {
         }
 
         @GetMapping("/notifications")
-        Object notifications(
+        List<Map<String, Object>> notifications(
                 @RequestParam(defaultValue = "0") int page,
                 @RequestParam(defaultValue = "50") int size,
+                @RequestParam(required = false) String productId,
                 @RequestParam(required = false) String status,
-                @RequestParam(required = false) String channel) {
-            return downstreamRequest("notification-api-service", () -> downstream.notificationApi.get()
+                @RequestParam(required = false) String channel,
+                @RequestParam(required = false) String priority,
+                @RequestParam(required = false) String dateFrom,
+                @RequestParam(required = false) String dateTo) {
+            Object[] notifications = downstreamRequest("notification-api-service", () -> downstream.notificationApi.get()
                     .uri(uri -> uri.path("/notifications")
                             .queryParam("page", page)
                             .queryParam("size", size)
@@ -82,7 +90,13 @@ public class AdminBffServiceApplication {
                             .queryParamIfPresent("channel", java.util.Optional.ofNullable(channel))
                             .build())
                     .retrieve()
-                    .body(Object.class));
+                    .body(Object[].class));
+            return objectList(notifications).stream()
+                    .filter(item -> matches(item, "productId", productId))
+                    .filter(item -> matches(item, "priority", priority))
+                    .filter(item -> createdOnOrAfter(item, dateFrom))
+                    .filter(item -> createdOnOrBefore(item, dateTo))
+                    .toList();
         }
 
         @GetMapping("/notifications/{id}")
@@ -101,8 +115,15 @@ public class AdminBffServiceApplication {
         }
 
         @GetMapping("/deliveries")
-        Object deliveries() {
-            return outboxEventsAsDeliveries(null);
+        Object deliveries(
+                @RequestParam(required = false) String status,
+                @RequestParam(required = false) String channel,
+                @RequestParam(required = false) String provider) {
+            return outboxEventsAsDeliveries(null).stream()
+                    .filter(item -> matches(item, "status", status))
+                    .filter(item -> matches(item, "channel", channel))
+                    .filter(item -> matches(item, "provider", provider))
+                    .toList();
         }
 
         @GetMapping("/outbox-events")
@@ -116,8 +137,31 @@ public class AdminBffServiceApplication {
         }
 
         @GetMapping("/templates")
-        Object templates() {
-            return downstreamRequest("template-service", () -> downstream.template.get().uri("/templates").retrieve().body(Object.class));
+        List<Map<String, Object>> templates(
+                @RequestParam(required = false) String productId,
+                @RequestParam(required = false) String channel,
+                @RequestParam(required = false) String status) {
+            Object[] templates = downstreamRequest("template-service", () -> downstream.template.get().uri("/templates").retrieve().body(Object[].class));
+            return objectList(templates).stream()
+                    .filter(item -> matches(item, "productId", productId))
+                    .filter(item -> matches(item, "channel", channel))
+                    .filter(item -> matches(item, "status", status))
+                    .toList();
+        }
+
+        @GetMapping("/products")
+        Object products() {
+            return downstreamRequest("template-service", () -> downstream.template.get().uri("/products").retrieve().body(Object.class));
+        }
+
+        @PostMapping("/products")
+        Object createProduct(@RequestBody Map<String, Object> request) {
+            return downstreamRequest("template-service", () -> downstream.template.post().uri("/products").body(request).retrieve().body(Object.class));
+        }
+
+        @PutMapping("/products/{id}")
+        Object updateProduct(@PathVariable String id, @RequestBody Map<String, Object> request) {
+            return downstreamRequest("template-service", () -> downstream.template.put().uri("/products/{id}", id).body(request).retrieve().body(Object.class));
         }
 
         @PostMapping("/templates")
@@ -185,10 +229,21 @@ public class AdminBffServiceApplication {
         private <T> T downstreamRequest(String service, java.util.function.Supplier<T> call) {
             try {
                 return call.get();
+            } catch (RestClientResponseException exception) {
+                meterRegistry.counter("admin_bff_downstream_error_total", "service", service, "reason", exception.getClass().getSimpleName()).increment();
+                throw new ResponseStatusException(exception.getStatusCode(), downstreamErrorMessage(exception), exception);
             } catch (RestClientException exception) {
                 meterRegistry.counter("admin_bff_downstream_error_total", "service", service, "reason", exception.getClass().getSimpleName()).increment();
                 throw exception;
             }
+        }
+
+        private String downstreamErrorMessage(RestClientResponseException exception) {
+            String body = exception.getResponseBodyAsString();
+            if (body == null || body.isBlank()) {
+                return exception.getStatusText();
+            }
+            return body.length() > 500 ? body.substring(0, 500) : body;
         }
 
         private long countByStatus(Object[] items, String status) {
@@ -224,7 +279,7 @@ public class AdminBffServiceApplication {
             delivery.put("notificationRequestId", String.valueOf(event.get("aggregateId")));
             delivery.put("templateId", "");
             delivery.put("channel", String.valueOf(valueOrDefault(payload, "channel", "EMAIL")));
-            delivery.put("status", "PUBLISHED".equals(status) ? "SENT" : status);
+            delivery.put("status", deliveryStatus(status));
             delivery.put("provider", "outbox");
             delivery.put("destination", String.valueOf(valueOrDefault(payload, "destination", "")));
             delivery.put("attemptCount", valueOrDefault(event, "attemptCount", 0));
@@ -233,6 +288,65 @@ public class AdminBffServiceApplication {
             delivery.put("lastErrorMessage", event.get("lastError"));
             delivery.put("createdAt", event.get("createdAt"));
             return delivery;
+        }
+
+        private String deliveryStatus(String outboxStatus) {
+            return switch (outboxStatus) {
+                case "PUBLISHED" -> "SENT";
+                case "DEAD_LETTER" -> "DEAD_LETTERED";
+                default -> outboxStatus;
+            };
+        }
+
+        private List<Map<String, Object>> objectList(Object value) {
+            if (value == null) {
+                return List.of();
+            }
+            List<?> rawItems;
+            if (value instanceof Object[] array) {
+                rawItems = List.of(array);
+            } else if (value instanceof List<?> list) {
+                rawItems = list;
+            } else {
+                return List.of();
+            }
+            List<Map<String, Object>> items = new ArrayList<>();
+            for (Object rawItem : rawItems) {
+                if (rawItem instanceof Map<?, ?> map) {
+                    Map<String, Object> normalized = new LinkedHashMap<>();
+                    map.forEach((key, itemValue) -> normalized.put(String.valueOf(key), itemValue));
+                    items.add(normalized);
+                }
+            }
+            return items;
+        }
+
+        private boolean matches(Map<String, Object> item, String key, String expected) {
+            if (expected == null || expected.isBlank()) {
+                return true;
+            }
+            Object actual = item.get(key);
+            return actual != null && expected.equalsIgnoreCase(String.valueOf(actual));
+        }
+
+        private boolean createdOnOrAfter(Map<String, Object> item, String date) {
+            if (date == null || date.isBlank()) {
+                return true;
+            }
+            return itemDate(item).compareTo(date) >= 0;
+        }
+
+        private boolean createdOnOrBefore(Map<String, Object> item, String date) {
+            if (date == null || date.isBlank()) {
+                return true;
+            }
+            return itemDate(item).compareTo(date) <= 0;
+        }
+
+        private String itemDate(Map<String, Object> item) {
+            Object createdAt = item.get("createdAt");
+            String value = createdAt == null ? "" : String.valueOf(createdAt);
+            return value.length() >= 10 ? value.substring(0, 10) : value;
         }
 
         private Object valueOrDefault(Map<?, ?> source, String key, Object fallback) {

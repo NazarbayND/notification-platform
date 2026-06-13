@@ -19,14 +19,24 @@ export interface CreateTemplatePayload {
 }
 
 export const templateKeys = {
-  byProduct: (productId: string | undefined) => ["templates", productId] as const
+  list: (filters: TemplateFilters) => ["templates", filters] as const
 };
 
 export function useTemplates(filters: TemplateFilters) {
   return useQuery({
-    queryKey: templateKeys.byProduct(filters.productId),
+    queryKey: templateKeys.list(filters),
     enabled: Boolean(filters.productId),
     queryFn: async () => {
+      const params = new URLSearchParams();
+      if (filters.productId) {
+        params.set("productId", filters.productId);
+      }
+      if (filters.channel) {
+        params.set("channel", filters.channel);
+      }
+      if (filters.status) {
+        params.set("status", filters.status);
+      }
       const templates = await request<Array<{
         id: string;
         productId: string;
@@ -37,10 +47,8 @@ export function useTemplates(filters: TemplateFilters) {
         status: TemplateStatus;
         createdAt: string | null;
         updatedAt: string | null;
-      }>>(`/admin/templates?productId=${filters.productId}`);
-      return templates
-        .filter((template) => !filters.productId || template.productId === filters.productId)
-        .map(toTemplate);
+      }>>(`/admin/templates?${params.toString()}`);
+      return templates.map(toTemplate);
     }
   });
 }
@@ -68,13 +76,14 @@ export function useCreateTemplate() {
           channel: payload.channel,
           subject: payload.subject?.trim() || payload.templateKey,
           body: payload.content,
+          status: payload.status,
           requiredVariables: []
         })
       });
       return toTemplate(template);
     },
     onSuccess: (_template, payload) =>
-      queryClient.invalidateQueries({ queryKey: templateKeys.byProduct(payload.productId) })
+      queryClient.invalidateQueries({ queryKey: ["templates"] })
   });
 }
 
@@ -97,6 +106,7 @@ export async function updateTemplate(templateId: string, payload: Partial<Create
       channel: payload.channel,
       subject: payload.subject?.trim() || payload.templateKey,
       body: payload.content,
+      status: payload.status,
       requiredVariables: []
     })
   });

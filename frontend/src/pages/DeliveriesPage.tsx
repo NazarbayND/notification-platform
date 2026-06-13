@@ -79,11 +79,11 @@ export function DeliveriesPage() {
                 <Button
                   type="button"
                   variant="secondary"
-                  disabled
-                  title="Manual retry endpoint is not available yet"
+                  disabled={!isRetryable(delivery.status) || retryDelivery.isPending}
+                  title={isRetryable(delivery.status) ? "Retry delivery" : "Only failed deliveries can be retried"}
                   onClick={() => retryDelivery.mutate(delivery.id)}
                 >
-                  Retry
+                  {retryDelivery.isPending ? "Retrying" : "Retry"}
                 </Button>
               </td>
             </tr>
@@ -92,4 +92,8 @@ export function DeliveriesPage() {
       ) : null}
     </>
   );
+}
+
+function isRetryable(status: DeliveryStatus) {
+  return status === "FAILED" || status === "RETRY_SCHEDULED" || status === "DLQ" || status === "DEAD_LETTERED";
 }

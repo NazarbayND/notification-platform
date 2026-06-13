@@ -53,22 +53,19 @@ export function ProductsPage() {
           {productsQuery.isLoading ? <LoadingBlock /> : null}
           {productsQuery.isError ? <ErrorBlock message={productsQuery.error.message} /> : null}
           {productsQuery.data?.length === 0 ? (
-            <StateBlock title="No products yet" message="Create a product to start managing templates." />
+            <StateBlock title="No products found" message="Create a product to start managing templates." />
           ) : null}
           {productsQuery.data && productsQuery.data.length > 0 ? (
-            <DataTable headers={["Name", "Status", "Created", "Actions"]}>
+            <DataTable headers={["Name", "Product ID", "Status", "Created", "Updated"]}>
               {productsQuery.data.map((product) => (
                 <tr key={product.id}>
                   <td className="px-4 py-3 font-medium">{product.name}</td>
+                  <td className="px-4 py-3 text-slate-600">{product.id}</td>
                   <td className="px-4 py-3">
                     <Badge value={product.status} tone={product.status === "ACTIVE" ? "success" : "neutral"} />
                   </td>
                   <td className="px-4 py-3 text-slate-600">{formatDateTime(product.createdAt)}</td>
-                  <td className="px-4 py-3">
-                    <Button type="button" variant="secondary" disabled title="Backend endpoint not available yet">
-                      Change status
-                    </Button>
-                  </td>
+                  <td className="px-4 py-3 text-slate-600">{formatDateTime(product.updatedAt)}</td>
                 </tr>
               ))}
             </DataTable>

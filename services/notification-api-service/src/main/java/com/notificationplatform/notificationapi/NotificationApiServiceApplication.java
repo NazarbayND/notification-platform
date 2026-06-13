@@ -8,6 +8,7 @@ import jakarta.validation.constraints.NotBlank;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -332,23 +333,25 @@ public class NotificationApiServiceApplication {
         List<NotificationRecord> findAll(String status, String channel, int page, int size) {
             int limit = Math.max(1, Math.min(size, 200));
             int offset = Math.max(page, 0) * limit;
-            if (status != null && channel != null) {
-                return jdbc.query("""
-                        SELECT id, product_id, user_id, channel, template_key, priority, status, idempotency_key,
-                               destination, variables, correlation_id, created_at, updated_at
-                        FROM notifications
-                        WHERE status = ? AND channel = ?
-                        ORDER BY created_at DESC
-                        LIMIT ? OFFSET ?
-                        """, this::mapNotification, status.toUpperCase(), channel.toUpperCase(), limit, offset);
-            }
-            return jdbc.query("""
+            StringBuilder sql = new StringBuilder("""
                     SELECT id, product_id, user_id, channel, template_key, priority, status, idempotency_key,
                            destination, variables, correlation_id, created_at, updated_at
                     FROM notifications
-                    ORDER BY created_at DESC
-                    LIMIT ? OFFSET ?
-                    """, this::mapNotification, limit, offset);
+                    WHERE 1 = 1
+                    """);
+            List<Object> params = new ArrayList<>();
+            if (status != null && !status.isBlank()) {
+                sql.append(" AND status = ?");
+                params.add(status.toUpperCase());
+            }
+            if (channel != null && !channel.isBlank()) {
+                sql.append(" AND channel = ?");
+                params.add(channel.toUpperCase());
+            }
+            sql.append(" ORDER BY created_at DESC LIMIT ? OFFSET ?");
+            params.add(limit);
+            params.add(offset);
+            return jdbc.query(sql.toString(), this::mapNotification, params.toArray());
         }
 
         private NotificationRecord mapNotification(ResultSet rs, int rowNum) throws SQLException {

@@ -69,7 +69,7 @@ export function TemplatesPage() {
             <StateBlock title="No templates found" message="Try changing filters or create a template for this product." />
           ) : null}
           {visibleTemplates.length > 0 ? (
-            <DataTable headers={["Key", "Channel", "Version", "Status", "Updated", "Actions"]}>
+            <DataTable headers={["Key", "Channel", "Version", "Status", "Updated"]}>
               {visibleTemplates.map((template) => (
                 <tr key={template.id}>
                   <td className="px-4 py-3 font-medium">{template.templateKey}</td>
@@ -79,11 +79,6 @@ export function TemplatesPage() {
                     <Badge value={template.status} tone={template.status === "ACTIVE" ? "success" : "neutral"} />
                   </td>
                   <td className="px-4 py-3 text-slate-600">{formatDateTime(template.updatedAt)}</td>
-                  <td className="px-4 py-3">
-                    <Button type="button" variant="secondary" disabled title="Backend endpoint not available yet">
-                      Edit
-                    </Button>
-                  </td>
                 </tr>
               ))}
             </DataTable>
