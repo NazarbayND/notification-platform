@@ -7,15 +7,15 @@
   "time": { "from": "now-1h", "to": "now" },
   "panels": [
     { "type": "timeseries", "title": "Requests per second", "gridPos": { "x": 0, "y": 0, "w": 8, "h": 7 }, "targets": [{ "expr": "sum(rate(http_server_requests_seconds_count[1m])) by (service)", "legendFormat": "{{service}}" }] },
-    { "type": "timeseries", "title": "p95 API latency", "gridPos": { "x": 8, "y": 0, "w": 8, "h": 7 }, "targets": [{ "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket[5m])) by (le, service))", "legendFormat": "{{service}}" }] },
+    { "type": "timeseries", "title": "Average API latency", "gridPos": { "x": 8, "y": 0, "w": 8, "h": 7 }, "targets": [{ "expr": "sum by (service) (rate(http_server_requests_seconds_sum[5m])) / clamp_min(sum by (service) (rate(http_server_requests_seconds_count[5m])), 0.001)", "legendFormat": "{{service}}" }] },
     { "type": "timeseries", "title": "Notifications created by channel", "gridPos": { "x": 16, "y": 0, "w": 8, "h": 7 }, "targets": [{ "expr": "sum(rate(notification_created_total[1m])) by (channel)", "legendFormat": "{{channel}}" }] },
     { "type": "stat", "title": "Sent vs failed notifications", "gridPos": { "x": 0, "y": 7, "w": 6, "h": 5 }, "targets": [{ "expr": "sum(delivery_attempt_total{status=\"SENT\"})", "legendFormat": "sent" }, { "expr": "sum(delivery_attempt_total{status=\"FAILED\"})", "legendFormat": "failed" }] },
     { "type": "stat", "title": "Pending outbox events", "gridPos": { "x": 6, "y": 7, "w": 6, "h": 5 }, "targets": [{ "expr": "outbox_pending_total" }] },
     { "type": "timeseries", "title": "Outbox publish rate", "gridPos": { "x": 12, "y": 7, "w": 6, "h": 5 }, "targets": [{ "expr": "rate(outbox_published_total[1m])" }] },
     { "type": "timeseries", "title": "Worker processing rate", "gridPos": { "x": 18, "y": 7, "w": 6, "h": 5 }, "targets": [{ "expr": "sum(rate(worker_messages_processed_total[1m])) by (service, channel)", "legendFormat": "{{service}} {{channel}}" }] },
     { "type": "timeseries", "title": "Worker error rate", "gridPos": { "x": 0, "y": 12, "w": 8, "h": 6 }, "targets": [{ "expr": "sum(rate(worker_messages_failed_total[5m])) by (service, channel)", "legendFormat": "{{service}} {{channel}}" }] },
-    { "type": "timeseries", "title": "Provider latency p95", "gridPos": { "x": 8, "y": 12, "w": 8, "h": 6 }, "targets": [{ "expr": "histogram_quantile(0.95, sum(rate(provider_request_duration_seconds_bucket[5m])) by (le, channel, provider))", "legendFormat": "{{channel}} {{provider}}" }] },
-    { "type": "timeseries", "title": "Provider error rate", "gridPos": { "x": 16, "y": 12, "w": 8, "h": 6 }, "targets": [{ "expr": "sum(rate(provider_error_total[5m])) by (channel, provider, errorCode)", "legendFormat": "{{channel}} {{provider}} {{errorCode}}" }] },
+    { "type": "timeseries", "title": "Provider average latency", "gridPos": { "x": 8, "y": 12, "w": 8, "h": 6 }, "targets": [{ "expr": "sum by (channel, provider) (rate(provider_request_duration_seconds_sum[5m])) / clamp_min(sum by (channel, provider) (rate(provider_request_duration_seconds_count[5m])), 0.001)", "legendFormat": "{{channel}} {{provider}}" }] },
+    { "type": "timeseries", "title": "Provider error rate", "gridPos": { "x": 16, "y": 12, "w": 8, "h": 6 }, "targets": [{ "expr": "sum(rate(provider_error_total[5m])) by (channel, provider, errorCode, error_code)", "legendFormat": "{{channel}} {{provider}} {{errorCode}}{{error_code}}" }] },
     { "type": "stat", "title": "Duplicate events skipped", "gridPos": { "x": 0, "y": 18, "w": 8, "h": 5 }, "targets": [{ "expr": "sum(worker_duplicate_events_skipped_total)" }] },
     { "type": "stat", "title": "DLQ count", "gridPos": { "x": 8, "y": 18, "w": 8, "h": 5 }, "targets": [{ "expr": "outbox_dead_letter_total" }] }
   ]

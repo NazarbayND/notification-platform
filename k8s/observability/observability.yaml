@@ -97,6 +97,9 @@ data:
       debug:
         verbosity: basic
     service:
+      telemetry:
+        metrics:
+          address: 0.0.0.0:8888
       pipelines:
         traces:
           receivers: [otlp]
@@ -113,18 +116,33 @@ data:
     apiVersion: 1
     datasources:
       - name: Prometheus
+        uid: Prometheus
         type: prometheus
         access: proxy
         url: http://prometheus:9090
         isDefault: true
       - name: Loki
+        uid: Loki
         type: loki
         access: proxy
         url: http://loki:3100
       - name: Jaeger
+        uid: Jaeger
         type: jaeger
         access: proxy
         url: http://jaeger:16686
+  dashboards.yml: |
+    apiVersion: 1
+    providers:
+      - name: notification-platform
+        orgId: 1
+        folder: Notification Platform
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 30
+        allowUiUpdates: false
+        options:
+          path: /var/lib/grafana/dashboards
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -172,9 +190,17 @@ data:
       - url: http://loki:3100/loki/api/v1/push
     scrape_configs:
       - job_name: kubernetes-pods
-        kubernetes_sd_configs:
-          - role: pod
+        static_configs:
+          - targets:
+              - localhost
+            labels:
+              job: kubernetes-pods
+              environment: kubernetes
+              __path__: /var/log/pods/*/*/*.log
         pipeline_stages:
+          - regex:
+              source: filename
+              expression: "/var/log/pods/(?P<namespace>[^_]+)_(?P<pod>[^_]+)_[^/]+/(?P<container>[^/]+)/.*\\.log"
           - cri: {}
           - json:
               expressions:
@@ -185,18 +211,14 @@ data:
                 level: level
               drop_malformed: false
           - labels:
+              namespace:
+              pod:
+              container:
               correlationId:
               traceId:
               spanId:
               serviceName:
               level:
-        relabel_configs:
-          - source_labels: [__meta_kubernetes_pod_label_app]
-            target_label: app
-          - source_labels: [__meta_kubernetes_namespace]
-            target_label: namespace
-          - source_labels: [__meta_kubernetes_pod_name]
-            target_label: pod
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -307,8 +329,12 @@ spec:
           ports:
             - containerPort: 3000
           volumeMounts:
-            - name: provisioning
+            - name: datasource-provisioning
               mountPath: /etc/grafana/provisioning/datasources
+            - name: dashboard-provisioning
+              mountPath: /etc/grafana/provisioning/dashboards
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
           resources:
             requests:
               cpu: 100m
@@ -317,9 +343,21 @@ spec:
               cpu: 1000m
               memory: 1Gi
       volumes:
-        - name: provisioning
+        - name: datasource-provisioning
           configMap:
             name: grafana-provisioning
+            items:
+              - key: datasources.yml
+                path: datasources.yml
+        - name: dashboard-provisioning
+          configMap:
+            name: grafana-provisioning
+            items:
+              - key: dashboards.yml
+                path: dashboards.yml
+        - name: dashboards
+          configMap:
+            name: grafana-dashboards
 ---
 apiVersion: v1
 kind: Service

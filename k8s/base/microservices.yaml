@@ -262,7 +262,7 @@ spec:
               memory: 128Mi
             limits:
               cpu: 500m
-              memory: 256Mi
+              memory: 1Gi
 ---
 apiVersion: v1
 kind: Service
@@ -953,6 +953,12 @@ spec:
                 secretKeyRef:
                   name: notification-platform-secrets
                   key: RABBITMQ_PASSWORD
+            - name: EMAIL_PROVIDER
+              value: smtp
+            - name: SPRING_MAIL_HOST
+              value: mailhog
+            - name: SPRING_MAIL_PORT
+              value: "1025"
           readinessProbe:
             httpGet:
               path: /actuator/health/readiness
