@@ -1,6 +1,6 @@
 interface StatCardProps {
   label: string;
-  value: number | null | undefined;
+  value: number | string | null | undefined;
   note?: string;
 }
 

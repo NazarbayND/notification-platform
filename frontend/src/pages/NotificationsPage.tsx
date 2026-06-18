@@ -1,9 +1,9 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useNotifications } from "../api/notifications";
 import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
-import { DataTable } from "../components/DataTable";
+import { PaginatedDataTable } from "../components/DataTable";
 import { SelectField, TextField } from "../components/Field";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
@@ -13,8 +13,7 @@ import type { NotificationPriority, NotificationRequestStatus } from "../types/a
 
 const notificationStatuses: NotificationRequestStatus[] = [
   "ACCEPTED",
-  "DELIVERY_CREATED",
-  "COMPLETED",
+  "SENT",
   "PARTIAL_FAILED",
   "FAILED",
   "SKIPPED"
@@ -29,7 +28,15 @@ export function NotificationsPage() {
   const [priority, setPriority] = useState<NotificationPriority | "">("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const notificationsQuery = useNotifications({ productId, status, priority, dateFrom, dateTo });
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const notificationsQuery = useNotifications({ productId, status, priority, dateFrom, dateTo }, page, pageSize);
+  const notifications = notificationsQuery.data?.items ?? [];
+  const totalNotifications = notificationsQuery.data?.total ?? 0;
+
+  useEffect(() => {
+    setPage(1);
+  }, [productId, status, priority, dateFrom, dateTo]);
 
   function handleLookup(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -87,15 +94,25 @@ export function NotificationsPage() {
 
       {notificationsQuery.isLoading ? <LoadingBlock /> : null}
       {notificationsQuery.isError ? <ErrorBlock message={notificationsQuery.error.message} /> : null}
-      {notificationsQuery.data?.length === 0 ? (
+      {notificationsQuery.data && totalNotifications === 0 ? (
         <StateBlock
           title="No notifications found"
           message="Adjust the filters or send a test notification."
         />
       ) : null}
-      {notificationsQuery.data && notificationsQuery.data.length > 0 ? (
-        <DataTable headers={["Template", "User", "Status", "Priority", "Created", "Actions"]}>
-          {notificationsQuery.data.map((notification) => (
+      {notificationsQuery.data && totalNotifications > 0 ? (
+        <PaginatedDataTable
+          headers={["Template", "User", "Status", "Priority", "Created", "Actions"]}
+          rows={notifications}
+          totalRows={totalNotifications}
+          page={page}
+          pageSize={pageSize}
+          onPageChange={setPage}
+          onPageSizeChange={(nextPageSize) => {
+            setPageSize(nextPageSize);
+            setPage(1);
+          }}
+          renderRow={(notification) => (
             <tr key={notification.id}>
               <td className="px-4 py-3 font-medium">{notification.templateKey}</td>
               <td className="px-4 py-3">{notification.externalUserId}</td>
@@ -110,8 +127,8 @@ export function NotificationsPage() {
                 </Link>
               </td>
             </tr>
-          ))}
-        </DataTable>
+          )}
+        />
       ) : null}
     </>
   );

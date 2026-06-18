@@ -25,26 +25,60 @@ export function DashboardPage() {
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
-          label="Total notifications"
-          value={stats?.totalNotifications}
-          note="All notification requests."
+          label="Notifications today"
+          value={stats?.totalNotificationsToday}
+          note="Requests created since UTC midnight."
         />
         <StatCard
-          label="Pending deliveries"
-          value={stats?.pendingDeliveries}
-          note="Pending, sending, or retry scheduled."
+          label="Sent"
+          value={stats?.sentCount}
+          note="Published outbox events or sent notifications."
         />
         <StatCard
-          label="Failed deliveries"
-          value={stats?.failedDeliveries}
-          note="Terminal failed status."
+          label="Pending outbox"
+          value={stats?.pendingOutboxCount}
+          note="Waiting to be published."
         />
         <StatCard
-          label="Dead-lettered deliveries"
-          value={stats?.deadLetteredDeliveries}
+          label="Failed outbox"
+          value={stats?.failedCount}
+          note="Failed or dead-lettered events."
+        />
+        <StatCard
+          label="Retry scheduled"
+          value={stats?.retryCount}
+          note="Failed events that can still retry."
+        />
+        <StatCard
+          label="Dead-lettered"
+          value={stats?.dlqCount}
           note="Max attempts exhausted."
+        />
+        <StatCard
+          label="Error rate"
+          value={formatPercent(stats?.providerErrorRate)}
+          note="Failed and dead-lettered share of processed outbox."
+        />
+        <StatCard
+          label="Throughput / min"
+          value={formatDecimal(stats?.throughputPerMinute)}
+          note="Notifications created today."
         />
       </div>
     </>
   );
+}
+
+function formatPercent(value: number | null | undefined) {
+  if (value == null) {
+    return "--";
+  }
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatDecimal(value: number | null | undefined) {
+  if (value == null) {
+    return "--";
+  }
+  return value.toFixed(2);
 }

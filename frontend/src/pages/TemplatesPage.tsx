@@ -2,7 +2,7 @@ import { FormEvent, useMemo, useState } from "react";
 import { TemplateFilters, useCreateTemplate, useTemplates } from "../api/templates";
 import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
-import { DataTable } from "../components/DataTable";
+import { PaginatedDataTable } from "../components/DataTable";
 import { SelectField, TextAreaField, TextField } from "../components/Field";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
@@ -69,19 +69,20 @@ export function TemplatesPage() {
             <StateBlock title="No templates found" message="Try changing filters or create a template for this product." />
           ) : null}
           {visibleTemplates.length > 0 ? (
-            <DataTable headers={["Key", "Channel", "Version", "Status", "Updated"]}>
-              {visibleTemplates.map((template) => (
+            <PaginatedDataTable
+              headers={["Key", "Channel", "Status", "Updated"]}
+              rows={visibleTemplates}
+              renderRow={(template) => (
                 <tr key={template.id}>
                   <td className="px-4 py-3 font-medium">{template.templateKey}</td>
                   <td className="px-4 py-3">{template.channel}</td>
-                  <td className="px-4 py-3">{template.version}</td>
                   <td className="px-4 py-3">
                     <Badge value={template.status} tone={template.status === "ACTIVE" ? "success" : "neutral"} />
                   </td>
                   <td className="px-4 py-3 text-slate-600">{formatDateTime(template.updatedAt)}</td>
                 </tr>
-              ))}
-            </DataTable>
+              )}
+            />
           ) : null}
         </section>
       </div>
@@ -93,7 +94,6 @@ function CreateTemplatePanel({ productId }: { productId: string }) {
   const createTemplate = useCreateTemplate();
   const [templateKey, setTemplateKey] = useState("");
   const [channel, setChannel] = useState<Channel>("EMAIL");
-  const [version, setVersion] = useState(1);
   const [subject, setSubject] = useState("");
   const [content, setContent] = useState("");
   const [status, setStatus] = useState<TemplateStatus>("DRAFT");
@@ -105,7 +105,6 @@ function CreateTemplatePanel({ productId }: { productId: string }) {
         productId,
         templateKey,
         channel,
-        version,
         subject: subject.trim() || null,
         content,
         status
@@ -115,7 +114,6 @@ function CreateTemplatePanel({ productId }: { productId: string }) {
           setTemplateKey("");
           setSubject("");
           setContent("");
-          setVersion(1);
           setStatus("DRAFT");
         }
       }
@@ -134,15 +132,14 @@ function CreateTemplatePanel({ productId }: { productId: string }) {
               </option>
             ))}
           </SelectField>
-          <TextField label="Version" type="number" min={1} value={version} onChange={(event) => setVersion(Number(event.target.value))} required />
+          <SelectField label="Status" value={status} onChange={(event) => setStatus(event.target.value as TemplateStatus)}>
+            {templateStatuses.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </SelectField>
         </div>
-        <SelectField label="Status" value={status} onChange={(event) => setStatus(event.target.value as TemplateStatus)}>
-          {templateStatuses.map((item) => (
-            <option key={item} value={item}>
-              {item}
-            </option>
-          ))}
-        </SelectField>
         <TextField label="Subject" value={subject} onChange={(event) => setSubject(event.target.value)} placeholder="Optional for non-email channels" />
         <TextAreaField label="Content" value={content} onChange={(event) => setContent(event.target.value)} placeholder="Hello {{name}}" required />
         {createTemplate.isError ? <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-ruby">{createTemplate.error.message}</p> : null}

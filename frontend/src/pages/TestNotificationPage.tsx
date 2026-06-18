@@ -7,7 +7,7 @@ import { SelectField, TextAreaField, TextField } from "../components/Field";
 import { JsonPreview } from "../components/JsonPreview";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
-import { ErrorBlock, LoadingBlock, StateBlock } from "../components/StateBlock";
+import { LoadingBlock, StateBlock } from "../components/StateBlock";
 import type { NotificationPriority, NotificationRequest } from "../types/api";
 
 const priorities: NotificationPriority[] = ["LOW", "NORMAL", "HIGH"];
@@ -104,7 +104,7 @@ export function TestNotificationPage() {
               <option value="">Select template</option>
               {emailTemplates.map((template) => (
                 <option key={template.id} value={template.templateKey}>
-                  {template.templateKey} v{template.version}
+                  {template.templateKey}
                 </option>
               ))}
             </SelectField>

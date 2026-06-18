@@ -7,7 +7,10 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -82,6 +85,37 @@ public class NotificationApiServiceApplication {
         NotificationStatus status(@PathVariable UUID notificationId) {
             NotificationRecord record = repository.findById(notificationId);
             return new NotificationStatus(record.id(), record.status(), record.channel(), record.updatedAt());
+        }
+
+        @GetMapping("/stats")
+        NotificationStats stats() {
+            Instant todayStart = LocalDate.now(ZoneOffset.UTC).atStartOfDay().toInstant(ZoneOffset.UTC);
+            long minutesToday = Math.max(1, Duration.between(todayStart, Instant.now()).toMinutes());
+            return repository.stats(todayStart, minutesToday);
+        }
+
+        @GetMapping("/page")
+        PageResponse<NotificationRecord> page(
+                @RequestParam(required = false) String productId,
+                @RequestParam(required = false) String status,
+                @RequestParam(required = false) String channel,
+                @RequestParam(required = false) String priority,
+                @RequestParam(required = false) String dateFrom,
+                @RequestParam(required = false) String dateTo,
+                @RequestParam(defaultValue = "0") int page,
+                @RequestParam(defaultValue = "50") int size) {
+            return repository.findPage(productId, status, channel, priority, dateFrom, dateTo, page, size);
+        }
+
+        @GetMapping("/deliveries/page")
+        PageResponse<DeliveryView> deliveriesPage(
+                @RequestParam(required = false) UUID notificationId,
+                @RequestParam(required = false) String status,
+                @RequestParam(required = false) String channel,
+                @RequestParam(required = false) String provider,
+                @RequestParam(defaultValue = "0") int page,
+                @RequestParam(defaultValue = "50") int size) {
+            return repository.findDeliveriesPage(notificationId, status, channel, provider, page, size);
         }
 
         @GetMapping("/{notificationId}")
@@ -354,6 +388,220 @@ public class NotificationApiServiceApplication {
             return jdbc.query(sql.toString(), this::mapNotification, params.toArray());
         }
 
+        PageResponse<NotificationRecord> findPage(
+                String productId,
+                String status,
+                String channel,
+                String priority,
+                String dateFrom,
+                String dateTo,
+                int page,
+                int size) {
+            int limit = Math.max(1, Math.min(size, 200));
+            int currentPage = Math.max(page, 0);
+            int offset = currentPage * limit;
+            StringBuilder where = new StringBuilder(" WHERE 1 = 1");
+            List<Object> params = new ArrayList<>();
+            addNotificationFilters(where, params, productId, status, channel, priority, dateFrom, dateTo);
+            long total = count("SELECT count(*) FROM notifications" + where, params.toArray());
+            List<Object> pageParams = new ArrayList<>(params);
+            pageParams.add(limit);
+            pageParams.add(offset);
+            List<NotificationRecord> items = jdbc.query("""
+                    SELECT id, product_id, user_id, channel, template_key, priority, status, idempotency_key,
+                           destination, variables, correlation_id, created_at, updated_at
+                    FROM notifications
+                    """ + where + " ORDER BY created_at DESC LIMIT ? OFFSET ?", this::mapNotification, pageParams.toArray());
+            return new PageResponse<>(items, total, currentPage, limit);
+        }
+
+        PageResponse<DeliveryView> findDeliveriesPage(
+                UUID notificationId,
+                String status,
+                String channel,
+                String provider,
+                int page,
+                int size) {
+            int limit = Math.max(1, Math.min(size, 200));
+            int currentPage = Math.max(page, 0);
+            int offset = currentPage * limit;
+            StringBuilder where = new StringBuilder(" WHERE 1 = 1");
+            List<Object> params = new ArrayList<>();
+            addDeliveryFilters(where, params, notificationId, status, channel, provider);
+            String from = """
+                    FROM notification_deliveries d
+                    LEFT JOIN outbox_events o ON o.payload ->> 'deliveryId' = d.id::text
+                    """;
+            long total = count("SELECT count(*) " + from + where, params.toArray());
+            List<Object> pageParams = new ArrayList<>(params);
+            pageParams.add(limit);
+            pageParams.add(offset);
+            List<DeliveryView> items = jdbc.query("""
+                    SELECT COALESCE(o.event_id::text, d.id::text) AS id,
+                           d.notification_id::text AS notification_request_id,
+                           d.channel,
+                           CASE d.status WHEN 'DEAD_LETTER' THEN 'DEAD_LETTERED' ELSE d.status END AS status,
+                           'outbox' AS provider,
+                           d.destination,
+                           d.attempt_count,
+                           d.max_attempts,
+                           o.next_attempt_at,
+                           o.last_error,
+                           d.created_at
+                    """ + from + where + " ORDER BY d.created_at DESC LIMIT ? OFFSET ?", this::mapDeliveryView, pageParams.toArray());
+            return new PageResponse<>(items, total, currentPage, limit);
+        }
+
+        NotificationStats stats(Instant todayStart, long minutesToday) {
+            long totalNotificationsToday = count("""
+                    SELECT count(*)
+                    FROM notifications
+                    WHERE created_at >= ?
+                    """, ts(todayStart));
+            long sentCount = count("""
+                    SELECT count(*)
+                    FROM notifications
+                    WHERE created_at >= ? AND status = 'SENT'
+                    """, ts(todayStart));
+            long failedCount = count("""
+                    SELECT count(*)
+                    FROM notifications
+                    WHERE created_at >= ? AND status IN ('FAILED', 'PARTIAL_FAILED')
+                    """, ts(todayStart));
+            long pendingOutboxCount = count("""
+                    SELECT count(*)
+                    FROM outbox_events
+                    WHERE status IN ('PENDING', 'PROCESSING')
+                    """);
+            long retryCount = count("""
+                    SELECT count(*)
+                    FROM outbox_events
+                    WHERE status = 'FAILED'
+                    """);
+            long dlqCount = count("""
+                    SELECT count(*)
+                    FROM outbox_events
+                    WHERE status = 'DEAD_LETTER'
+                    """);
+            long failedDeliveries = count("""
+                    SELECT count(*)
+                    FROM notification_deliveries
+                    WHERE updated_at >= ? AND status IN ('FAILED', 'DEAD_LETTER')
+                    """, ts(todayStart));
+            long processedDeliveries = count("""
+                    SELECT count(*)
+                    FROM notification_deliveries
+                    WHERE updated_at >= ? AND status IN ('SENT', 'FAILED', 'DEAD_LETTER')
+                    """, ts(todayStart));
+            double providerErrorRate = processedDeliveries == 0 ? 0.0 : (double) failedDeliveries / processedDeliveries;
+            double throughputPerMinute = (double) totalNotificationsToday / minutesToday;
+            return new NotificationStats(
+                    totalNotificationsToday,
+                    sentCount,
+                    failedCount,
+                    pendingOutboxCount,
+                    retryCount,
+                    dlqCount,
+                    providerErrorRate,
+                    throughputPerMinute);
+        }
+
+        private long count(String sql, Object... args) {
+            Long value = jdbc.queryForObject(sql, Long.class, args);
+            return value == null ? 0 : value;
+        }
+
+        private void addNotificationFilters(
+                StringBuilder where,
+                List<Object> params,
+                String productId,
+                String status,
+                String channel,
+                String priority,
+                String dateFrom,
+                String dateTo) {
+            if (productId != null && !productId.isBlank()) {
+                where.append(" AND product_id = ?");
+                params.add(productId);
+            }
+            if (status != null && !status.isBlank()) {
+                where.append(" AND status = ?");
+                params.add(status.toUpperCase());
+            }
+            if (channel != null && !channel.isBlank()) {
+                where.append(" AND channel = ?");
+                params.add(channel.toUpperCase());
+            }
+            if (priority != null && !priority.isBlank()) {
+                where.append(" AND priority = ?");
+                params.add(priority.toUpperCase());
+            }
+            Instant from = startOfDate(dateFrom);
+            if (from != null) {
+                where.append(" AND created_at >= ?");
+                params.add(ts(from));
+            }
+            Instant to = endOfDate(dateTo);
+            if (to != null) {
+                where.append(" AND created_at < ?");
+                params.add(ts(to));
+            }
+        }
+
+        private void addDeliveryFilters(
+                StringBuilder where,
+                List<Object> params,
+                UUID notificationId,
+                String status,
+                String channel,
+                String provider) {
+            if (notificationId != null) {
+                where.append(" AND d.notification_id = ?");
+                params.add(notificationId);
+            }
+            if (status != null && !status.isBlank()) {
+                where.append(" AND d.status = ?");
+                params.add(deliveryStatusFilter(status));
+            }
+            if (channel != null && !channel.isBlank()) {
+                where.append(" AND d.channel = ?");
+                params.add(channel.toUpperCase());
+            }
+            if (provider != null && !provider.isBlank()) {
+                where.append(" AND LOWER('outbox') LIKE ?");
+                params.add("%" + provider.toLowerCase() + "%");
+            }
+        }
+
+        private String deliveryStatusFilter(String status) {
+            return switch (status.toUpperCase()) {
+                case "DEAD_LETTERED", "DLQ" -> "DEAD_LETTER";
+                default -> status.toUpperCase();
+            };
+        }
+
+        private Instant startOfDate(String date) {
+            if (date == null || date.isBlank()) {
+                return null;
+            }
+            try {
+                return LocalDate.parse(date).atStartOfDay().toInstant(ZoneOffset.UTC);
+            } catch (RuntimeException exception) {
+                return null;
+            }
+        }
+
+        private Instant endOfDate(String date) {
+            if (date == null || date.isBlank()) {
+                return null;
+            }
+            try {
+                return LocalDate.parse(date).plusDays(1).atStartOfDay().toInstant(ZoneOffset.UTC);
+            } catch (RuntimeException exception) {
+                return null;
+            }
+        }
+
         private NotificationRecord mapNotification(ResultSet rs, int rowNum) throws SQLException {
             return new NotificationRecord(
                     rs.getObject("id", UUID.class),
@@ -369,6 +617,23 @@ public class NotificationApiServiceApplication {
                     rs.getString("correlation_id"),
                     rs.getTimestamp("created_at").toInstant(),
                     rs.getTimestamp("updated_at").toInstant());
+        }
+
+        private DeliveryView mapDeliveryView(ResultSet rs, int rowNum) throws SQLException {
+            java.sql.Timestamp nextAttemptAt = rs.getTimestamp("next_attempt_at");
+            return new DeliveryView(
+                    rs.getString("id"),
+                    rs.getString("notification_request_id"),
+                    "",
+                    rs.getString("channel"),
+                    rs.getString("status"),
+                    rs.getString("provider"),
+                    rs.getString("destination"),
+                    rs.getInt("attempt_count"),
+                    rs.getInt("max_attempts"),
+                    nextAttemptAt == null ? null : nextAttemptAt.toInstant(),
+                    rs.getString("last_error"),
+                    rs.getTimestamp("created_at").toInstant());
         }
 
         private Map<String, Object> readMap(String json) {
@@ -406,6 +671,35 @@ public class NotificationApiServiceApplication {
     }
 
     record NotificationStatus(UUID notificationId, String status, String channel, Instant updatedAt) {
+    }
+
+    record NotificationStats(
+            long totalNotificationsToday,
+            long sentCount,
+            long failedCount,
+            long pendingOutboxCount,
+            long retryCount,
+            long dlqCount,
+            double providerErrorRate,
+            double throughputPerMinute) {
+    }
+
+    record PageResponse<T>(List<T> items, long total, int page, int size) {
+    }
+
+    record DeliveryView(
+            String id,
+            String notificationRequestId,
+            String templateId,
+            String channel,
+            String status,
+            String provider,
+            String destination,
+            int attemptCount,
+            int maxAttempts,
+            Instant nextAttemptAt,
+            String lastErrorMessage,
+            Instant createdAt) {
     }
 
     record NotificationRecord(

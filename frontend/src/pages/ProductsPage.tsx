@@ -2,7 +2,7 @@ import { FormEvent, useState } from "react";
 import { useCreateProduct, useProducts } from "../api/products";
 import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
-import { DataTable } from "../components/DataTable";
+import { PaginatedDataTable } from "../components/DataTable";
 import { TextField } from "../components/Field";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
@@ -56,8 +56,10 @@ export function ProductsPage() {
             <StateBlock title="No products found" message="Create a product to start managing templates." />
           ) : null}
           {productsQuery.data && productsQuery.data.length > 0 ? (
-            <DataTable headers={["Name", "Product ID", "Status", "Created", "Updated"]}>
-              {productsQuery.data.map((product) => (
+            <PaginatedDataTable
+              headers={["Name", "Product ID", "Status", "Created", "Updated"]}
+              rows={productsQuery.data}
+              renderRow={(product) => (
                 <tr key={product.id}>
                   <td className="px-4 py-3 font-medium">{product.name}</td>
                   <td className="px-4 py-3 text-slate-600">{product.id}</td>
@@ -67,8 +69,8 @@ export function ProductsPage() {
                   <td className="px-4 py-3 text-slate-600">{formatDateTime(product.createdAt)}</td>
                   <td className="px-4 py-3 text-slate-600">{formatDateTime(product.updatedAt)}</td>
                 </tr>
-              ))}
-            </DataTable>
+              )}
+            />
           ) : null}
         </section>
       </div>

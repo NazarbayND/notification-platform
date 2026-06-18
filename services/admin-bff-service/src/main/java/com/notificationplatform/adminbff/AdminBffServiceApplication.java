@@ -2,7 +2,10 @@ package com.notificationplatform.adminbff;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -57,18 +60,22 @@ public class AdminBffServiceApplication {
                     .tag("endpoint", "dashboard")
                     .register(meterRegistry)
                     .record(() -> {
-                        Object[] notifications = downstreamRequest("notification-api-service", () -> downstream.notificationApi.get()
-                                .uri("/notifications?size=200")
+                        NotificationStats stats = downstreamRequest("notification-api-service", () -> downstream.notificationApi.get()
+                                .uri("/notifications/stats")
                                 .retrieve()
-                                .body(Object[].class));
-                        Object[] outbox = downstreamRequest("outbox-publisher-service", () -> downstream.outboxPublisher.get()
-                                .uri("/outbox/events")
-                                .retrieve()
-                                .body(Object[].class));
-                        long totalNotifications = notifications == null ? 0 : notifications.length;
-                        long pendingOutbox = countByStatus(outbox, "PENDING");
-                        long failedOutbox = countByStatus(outbox, "FAILED") + countByStatus(outbox, "DEAD_LETTER");
-                        return new DashboardStats(totalNotifications, 0, failedOutbox, pendingOutbox, failedOutbox, countByStatus(outbox, "DEAD_LETTER"), 0.0, 0.0);
+                                .body(NotificationStats.class));
+                        if (stats == null) {
+                            return new DashboardStats(0, 0, 0, 0, 0, 0, 0.0, 0.0);
+                        }
+                        return new DashboardStats(
+                                stats.totalNotificationsToday(),
+                                stats.sentCount(),
+                                stats.failedCount(),
+                                stats.pendingOutboxCount(),
+                                stats.retryCount(),
+                                stats.dlqCount(),
+                                stats.providerErrorRate(),
+                                stats.throughputPerMinute());
                     });
         }
 
@@ -99,6 +106,31 @@ public class AdminBffServiceApplication {
                     .toList();
         }
 
+        @GetMapping("/notifications/page")
+        Object notificationsPage(
+                @RequestParam(defaultValue = "0") int page,
+                @RequestParam(defaultValue = "50") int size,
+                @RequestParam(required = false) String productId,
+                @RequestParam(required = false) String status,
+                @RequestParam(required = false) String channel,
+                @RequestParam(required = false) String priority,
+                @RequestParam(required = false) String dateFrom,
+                @RequestParam(required = false) String dateTo) {
+            return downstreamRequest("notification-api-service", () -> downstream.notificationApi.get()
+                    .uri(uri -> uri.path("/notifications/page")
+                            .queryParam("page", page)
+                            .queryParam("size", size)
+                            .queryParamIfPresent("productId", java.util.Optional.ofNullable(productId))
+                            .queryParamIfPresent("status", java.util.Optional.ofNullable(status))
+                            .queryParamIfPresent("channel", java.util.Optional.ofNullable(channel))
+                            .queryParamIfPresent("priority", java.util.Optional.ofNullable(priority))
+                            .queryParamIfPresent("dateFrom", java.util.Optional.ofNullable(dateFrom))
+                            .queryParamIfPresent("dateTo", java.util.Optional.ofNullable(dateTo))
+                            .build())
+                    .retrieve()
+                    .body(Object.class));
+        }
+
         @GetMapping("/notifications/{id}")
         Object notification(@PathVariable UUID id) {
             return downstreamRequest("notification-api-service", () -> downstream.notificationApi.get().uri("/notifications/{id}", id).retrieve().body(Object.class));
@@ -124,6 +156,27 @@ public class AdminBffServiceApplication {
                     .filter(item -> matches(item, "channel", channel))
                     .filter(item -> matches(item, "provider", provider))
                     .toList();
+        }
+
+        @GetMapping("/deliveries/page")
+        Object deliveriesPage(
+                @RequestParam(defaultValue = "0") int page,
+                @RequestParam(defaultValue = "50") int size,
+                @RequestParam(required = false) UUID notificationRequestId,
+                @RequestParam(required = false) String status,
+                @RequestParam(required = false) String channel,
+                @RequestParam(required = false) String provider) {
+            return downstreamRequest("notification-api-service", () -> downstream.notificationApi.get()
+                    .uri(uri -> uri.path("/notifications/deliveries/page")
+                            .queryParam("page", page)
+                            .queryParam("size", size)
+                            .queryParamIfPresent("notificationId", java.util.Optional.ofNullable(notificationRequestId))
+                            .queryParamIfPresent("status", java.util.Optional.ofNullable(status))
+                            .queryParamIfPresent("channel", java.util.Optional.ofNullable(channel))
+                            .queryParamIfPresent("provider", java.util.Optional.ofNullable(provider))
+                            .build())
+                    .retrieve()
+                    .body(Object.class));
         }
 
         @GetMapping("/outbox-events")
@@ -246,14 +299,32 @@ public class AdminBffServiceApplication {
             return body.length() > 500 ? body.substring(0, 500) : body;
         }
 
-        private long countByStatus(Object[] items, String status) {
-            if (items == null) {
-                return 0;
-            }
-            return List.of(items).stream()
-                    .filter(Map.class::isInstance)
-                    .map(Map.class::cast)
-                    .filter(item -> status.equals(item.get("status")))
+        private long countByStatus(List<Map<String, Object>> items, String status) {
+            return items.stream()
+                    .filter(item -> status.equals(String.valueOf(item.get("status"))))
+                    .count();
+        }
+
+        private long countByAnyStatus(List<Map<String, Object>> items, String... statuses) {
+            return items.stream()
+                    .filter(item -> {
+                        String itemStatus = String.valueOf(item.get("status"));
+                        for (String status : statuses) {
+                            if (status.equals(itemStatus)) {
+                                return true;
+                            }
+                        }
+                        return false;
+                    })
+                    .count();
+        }
+
+        private long countCreatedOnOrAfter(List<Map<String, Object>> items, Instant start) {
+            return items.stream()
+                    .filter(item -> {
+                        Instant createdAt = instantValue(item, "createdAt");
+                        return createdAt != null && !createdAt.isBefore(start);
+                    })
                     .count();
         }
 
@@ -349,6 +420,21 @@ public class AdminBffServiceApplication {
             return value.length() >= 10 ? value.substring(0, 10) : value;
         }
 
+        private Instant instantValue(Map<String, Object> item, String key) {
+            Object value = item.get(key);
+            if (value instanceof Instant instant) {
+                return instant;
+            }
+            if (value == null) {
+                return null;
+            }
+            try {
+                return Instant.parse(String.valueOf(value));
+            } catch (RuntimeException exception) {
+                return null;
+            }
+        }
+
         private Object valueOrDefault(Map<?, ?> source, String key, Object fallback) {
             Object value = source.get(key);
             return value == null ? fallback : value;
@@ -394,6 +480,17 @@ public class AdminBffServiceApplication {
     }
 
     record DashboardStats(
+            long totalNotificationsToday,
+            long sentCount,
+            long failedCount,
+            long pendingOutboxCount,
+            long retryCount,
+            long dlqCount,
+            double providerErrorRate,
+            double throughputPerMinute) {
+    }
+
+    record NotificationStats(
             long totalNotificationsToday,
             long sentCount,
             long failedCount,

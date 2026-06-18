@@ -12,7 +12,6 @@ export interface CreateTemplatePayload {
   productId: string;
   templateKey: string;
   channel: Channel;
-  version: number;
   subject: string | null;
   content: string;
   status: TemplateStatus;
@@ -82,8 +81,7 @@ export function useCreateTemplate() {
       });
       return toTemplate(template);
     },
-    onSuccess: (_template, payload) =>
-      queryClient.invalidateQueries({ queryKey: ["templates"] })
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["templates"] })
   });
 }
 
@@ -129,7 +127,6 @@ function toTemplate(template: {
     productId: template.productId,
     templateKey: template.key,
     channel: template.channel,
-    version: 1,
     subject: template.subject,
     content: template.body,
     status: template.status,

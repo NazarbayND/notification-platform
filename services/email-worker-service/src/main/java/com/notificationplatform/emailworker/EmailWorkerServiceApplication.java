@@ -219,6 +219,7 @@ public class EmailWorkerServiceApplication {
 
         @Transactional
         void saveAttempt(DeliveryJob job, ProviderResult result) {
+            Instant now = Instant.now();
             jdbc.update("""
                     INSERT INTO delivery_attempts (
                         id, event_id, notification_id, delivery_id, channel, destination, provider,
@@ -228,7 +229,25 @@ public class EmailWorkerServiceApplication {
                     """,
                     UUID.randomUUID(), job.eventId(), job.notificationId(), job.deliveryId(), job.destination(),
                     result.provider(), result.providerMessageId(), result.status(), writeJson(result.rawResponse()),
-                    result.errorCode(), result.errorMessage(), ts(result.sentAt()), ts(Instant.now()));
+                    result.errorCode(), result.errorMessage(), ts(result.sentAt()), ts(now));
+            updateNotificationStatus(job, result, now);
+        }
+
+        private void updateNotificationStatus(DeliveryJob job, ProviderResult result, Instant now) {
+            jdbc.update("""
+                    UPDATE notification_api.notification_deliveries
+                    SET status = ?, attempt_count = attempt_count + 1, updated_at = ?
+                    WHERE id = ?
+                    """, result.status(), ts(now), job.deliveryId());
+            jdbc.update("""
+                    UPDATE notification_api.notifications
+                    SET status = ?, updated_at = ?
+                    WHERE id = ?
+                    """, notificationStatus(result.status()), ts(now), job.notificationId());
+        }
+
+        private String notificationStatus(String deliveryStatus) {
+            return "SENT".equals(deliveryStatus) ? "SENT" : "FAILED";
         }
 
         private String writeJson(Object value) {

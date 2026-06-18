@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { request } from "./http";
-import type { Channel, NotificationPriority, NotificationRequest, NotificationRequestStatus } from "../types/api";
+import type { Channel, NotificationPriority, NotificationRequest, NotificationRequestStatus, PageResult } from "../types/api";
 
 export interface NotificationFilters {
   productId?: string;
@@ -28,11 +28,13 @@ export interface SendNotificationPayload {
   expiresAt: string | null;
 }
 
-export function useNotifications(filters: NotificationFilters) {
+export function useNotifications(filters: NotificationFilters, page = 1, pageSize = 10) {
   return useQuery({
-    queryKey: notificationKeys.list(filters),
+    queryKey: notificationKeys.list({ ...filters, page: String(page), pageSize: String(pageSize) } as NotificationFilters),
     queryFn: async () => {
       const params = new URLSearchParams();
+      params.set("page", String(Math.max(0, page - 1)));
+      params.set("size", String(pageSize));
       if (filters.status) {
         params.set("status", filters.status);
       }
@@ -50,8 +52,11 @@ export function useNotifications(filters: NotificationFilters) {
       }
 
       const query = params.toString();
-      const notifications = await request<MicroserviceNotification[]>(`/admin/notifications${query ? `?${query}` : ""}`);
-      return notifications.map(toNotificationRequest);
+      const notifications = await request<PageResult<MicroserviceNotification>>(`/admin/notifications/page?${query}`);
+      return {
+        ...notifications,
+        items: notifications.items.map(toNotificationRequest)
+      };
     }
   });
 }

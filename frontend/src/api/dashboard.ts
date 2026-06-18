@@ -10,18 +10,16 @@ export function useDashboardStats() {
   return useQuery({
     queryKey: dashboardKeys.stats,
     queryFn: async (): Promise<DashboardStats> => {
-      const stats = await request<{
-        totalNotificationsToday?: number;
-        sentCount?: number;
-        failedCount?: number;
-        pendingOutboxCount?: number;
-        dlqCount?: number;
-      }>("/admin/dashboard");
+      const stats = await request<Partial<DashboardStats>>("/admin/dashboard");
       return {
-        totalNotifications: stats.totalNotificationsToday ?? 0,
-        pendingDeliveries: stats.pendingOutboxCount ?? 0,
-        failedDeliveries: stats.failedCount ?? 0,
-        deadLetteredDeliveries: stats.dlqCount ?? 0
+        totalNotificationsToday: stats.totalNotificationsToday ?? 0,
+        sentCount: stats.sentCount ?? 0,
+        failedCount: stats.failedCount ?? 0,
+        pendingOutboxCount: stats.pendingOutboxCount ?? 0,
+        retryCount: stats.retryCount ?? 0,
+        dlqCount: stats.dlqCount ?? 0,
+        providerErrorRate: stats.providerErrorRate ?? 0,
+        throughputPerMinute: stats.throughputPerMinute ?? 0
       };
     }
   });

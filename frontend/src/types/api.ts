@@ -4,8 +4,7 @@ export type TemplateStatus = "DRAFT" | "ACTIVE" | "ARCHIVED";
 export type NotificationPriority = "LOW" | "NORMAL" | "HIGH";
 export type NotificationRequestStatus =
   | "ACCEPTED"
-  | "DELIVERY_CREATED"
-  | "COMPLETED"
+  | "SENT"
   | "PARTIAL_FAILED"
   | "FAILED"
   | "SKIPPED";
@@ -34,7 +33,6 @@ export interface Template {
   productId: string;
   templateKey: string;
   channel: Channel;
-  version: number;
   subject: string | null;
   content: string;
   status: TemplateStatus;
@@ -74,11 +72,22 @@ export interface Delivery {
   createdAt: string | null;
 }
 
+export interface PageResult<T> {
+  items: T[];
+  total: number;
+  page: number;
+  size: number;
+}
+
 export interface DashboardStats {
-  totalNotifications: number | null;
-  pendingDeliveries: number | null;
-  failedDeliveries: number | null;
-  deadLetteredDeliveries: number | null;
+  totalNotificationsToday: number | null;
+  sentCount: number | null;
+  failedCount: number | null;
+  pendingOutboxCount: number | null;
+  retryCount: number | null;
+  dlqCount: number | null;
+  providerErrorRate: number | null;
+  throughputPerMinute: number | null;
 }
 
 export interface ApiError {

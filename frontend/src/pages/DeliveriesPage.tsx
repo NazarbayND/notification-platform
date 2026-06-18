@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useDeliveries, useRetryDelivery } from "../api/deliveries";
 import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
-import { DataTable } from "../components/DataTable";
+import { PaginatedDataTable } from "../components/DataTable";
 import { SelectField, TextField } from "../components/Field";
 import { PageHeader } from "../components/PageHeader";
 import { ErrorBlock, LoadingBlock, StateBlock } from "../components/StateBlock";
@@ -27,8 +27,16 @@ export function DeliveriesPage() {
   const [status, setStatus] = useState<DeliveryStatus | "">("");
   const [channel, setChannel] = useState<Channel | "">("");
   const [provider, setProvider] = useState("");
-  const deliveriesQuery = useDeliveries({ status, channel, provider });
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const deliveriesQuery = useDeliveries({ status, channel, provider }, page, pageSize);
+  const deliveries = deliveriesQuery.data?.items ?? [];
+  const totalDeliveries = deliveriesQuery.data?.total ?? 0;
   const retryDelivery = useRetryDelivery();
+
+  useEffect(() => {
+    setPage(1);
+  }, [status, channel, provider]);
 
   return (
     <>
@@ -59,15 +67,25 @@ export function DeliveriesPage() {
       {retryDelivery.isError ? (
         <div className="mb-4 rounded-md bg-red-50 px-4 py-3 text-sm text-ruby">{retryDelivery.error.message}</div>
       ) : null}
-      {deliveriesQuery.data?.length === 0 ? (
+      {deliveriesQuery.data && totalDeliveries === 0 ? (
         <StateBlock
           title="No deliveries found"
           message="Try changing the filters or send a test notification."
         />
       ) : null}
-      {deliveriesQuery.data && deliveriesQuery.data.length > 0 ? (
-        <DataTable headers={["Channel", "Status", "Provider", "Attempts", "Next attempt", "Last error", "Actions"]}>
-          {deliveriesQuery.data.map((delivery) => (
+      {deliveriesQuery.data && totalDeliveries > 0 ? (
+        <PaginatedDataTable
+          headers={["Channel", "Status", "Provider", "Attempts", "Next attempt", "Last error", "Actions"]}
+          rows={deliveries}
+          totalRows={totalDeliveries}
+          page={page}
+          pageSize={pageSize}
+          onPageChange={setPage}
+          onPageSizeChange={(nextPageSize) => {
+            setPageSize(nextPageSize);
+            setPage(1);
+          }}
+          renderRow={(delivery) => (
             <tr key={delivery.id}>
               <td className="px-4 py-3">{delivery.channel}</td>
               <td className="px-4 py-3"><Badge value={delivery.status} tone={delivery.status === "DLQ" || delivery.status === "DEAD_LETTERED" || delivery.status === "FAILED" ? "danger" : "neutral"} /></td>
@@ -87,8 +105,8 @@ export function DeliveriesPage() {
                 </Button>
               </td>
             </tr>
-          ))}
-        </DataTable>
+          )}
+        />
       ) : null}
     </>
   );

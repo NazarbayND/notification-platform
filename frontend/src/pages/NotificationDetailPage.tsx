@@ -1,9 +1,9 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useDeliveries } from "../api/deliveries";
 import { useNotification } from "../api/notifications";
 import { Badge } from "../components/Badge";
-import { DataTable } from "../components/DataTable";
+import { PaginatedDataTable } from "../components/DataTable";
 import { JsonPreview } from "../components/JsonPreview";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
@@ -13,7 +13,11 @@ import { formatDateTime } from "../lib/format";
 export function NotificationDetailPage() {
   const { id } = useParams();
   const notificationQuery = useNotification(id);
-  const deliveriesQuery = useDeliveries({ notificationRequestId: id });
+  const [deliveriesPage, setDeliveriesPage] = useState(1);
+  const [deliveriesPageSize, setDeliveriesPageSize] = useState(10);
+  const deliveriesQuery = useDeliveries({ notificationRequestId: id }, deliveriesPage, deliveriesPageSize);
+  const deliveries = deliveriesQuery.data?.items ?? [];
+  const totalDeliveries = deliveriesQuery.data?.total ?? 0;
 
   if (notificationQuery.isLoading) {
     return <LoadingBlock />;
@@ -58,15 +62,25 @@ export function NotificationDetailPage() {
 
           <Panel title="Related deliveries">
             {deliveriesQuery.isLoading ? <LoadingBlock /> : null}
-            {deliveriesQuery.data?.length === 0 ? (
+            {deliveriesQuery.data && totalDeliveries === 0 ? (
               <StateBlock
                 title="No deliveries found"
                 message="This notification does not have delivery rows yet."
               />
             ) : null}
-            {deliveriesQuery.data && deliveriesQuery.data.length > 0 ? (
-              <DataTable headers={["Channel", "Status", "Provider", "Attempts", "Last error"]}>
-                {deliveriesQuery.data.map((delivery) => (
+            {deliveriesQuery.data && totalDeliveries > 0 ? (
+              <PaginatedDataTable
+                headers={["Channel", "Status", "Provider", "Attempts", "Last error"]}
+                rows={deliveries}
+                totalRows={totalDeliveries}
+                page={deliveriesPage}
+                pageSize={deliveriesPageSize}
+                onPageChange={setDeliveriesPage}
+                onPageSizeChange={(nextPageSize) => {
+                  setDeliveriesPageSize(nextPageSize);
+                  setDeliveriesPage(1);
+                }}
+                renderRow={(delivery) => (
                   <tr key={delivery.id}>
                     <td className="px-4 py-3">{delivery.channel}</td>
                     <td className="px-4 py-3"><Badge value={delivery.status} /></td>
@@ -74,8 +88,8 @@ export function NotificationDetailPage() {
                     <td className="px-4 py-3">{delivery.attemptCount}/{delivery.maxAttempts}</td>
                     <td className="px-4 py-3 text-slate-600">{delivery.lastErrorMessage ?? "None"}</td>
                   </tr>
-                ))}
-              </DataTable>
+                )}
+              />
             ) : null}
           </Panel>
         </div>
