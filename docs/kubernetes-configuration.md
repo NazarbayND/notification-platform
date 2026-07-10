@@ -1,5 +1,15 @@
 # Kubernetes Configuration
 
+## Kafka endpoint
+
+The application manifests intentionally do not install a production Kafka cluster. The base ConfigMap points at a conventional Strimzi bootstrap service:
+
+```text
+kafka-kafka-bootstrap.kafka.svc:9092
+```
+
+Install/manage Kafka separately with Strimzi, Bitnami, or a managed Kafka provider, then override `SPRING_KAFKA_BOOTSTRAP_SERVERS`. The API manifest also exposes broker mode, topic, admission limits, Redis endpoint, and publish timeout through the ConfigMap. Keep `NOTIFICATION_BROKER_DELIVERY=rabbitmq` until the worker migration is complete.
+
 This project uses plain Kubernetes manifests for local learning and testing.
 
 ## Files

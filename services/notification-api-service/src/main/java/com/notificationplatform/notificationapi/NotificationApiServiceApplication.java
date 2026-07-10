@@ -1,10 +1,13 @@
 package com.notificationplatform.notificationapi;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.notificationplatform.common.observability.CorrelationIds;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Duration;
@@ -19,6 +22,7 @@ import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.http.HttpStatus;
@@ -39,6 +43,7 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.server.ResponseStatusException;
 
 @SpringBootApplication
+@ConfigurationPropertiesScan
 public class NotificationApiServiceApplication {
 
     public static void main(String[] args) {
@@ -60,12 +65,17 @@ public class NotificationApiServiceApplication {
     @RestController
     @RequestMapping("/notifications")
     static class NotificationController {
-        private final NotificationSubmissionService service;
+        private final NotificationIntakeRouter service;
         private final NotificationRepository repository;
+        private final NotificationStatusLookupService statusLookupService;
 
-        NotificationController(NotificationSubmissionService service, NotificationRepository repository) {
+        NotificationController(
+                NotificationIntakeRouter service,
+                NotificationRepository repository,
+                NotificationStatusLookupService statusLookupService) {
             this.service = service;
             this.repository = repository;
+            this.statusLookupService = statusLookupService;
         }
 
         @PostMapping
@@ -73,18 +83,15 @@ public class NotificationApiServiceApplication {
                 @Valid @RequestBody NotificationRequest request,
                 @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
             String resolvedCorrelationId = correlationId == null || correlationId.isBlank()
-                    ? UUID.randomUUID().toString()
+                    ? CorrelationIds.current()
                     : correlationId;
             NotificationAccepted response = service.submit(request, resolvedCorrelationId);
-            return ResponseEntity.status(HttpStatus.ACCEPTED)
-                    .header("X-Correlation-Id", resolvedCorrelationId)
-                    .body(response);
+            return ResponseEntity.status(HttpStatus.ACCEPTED).body(response);
         }
 
         @GetMapping("/{notificationId}/status")
         NotificationStatus status(@PathVariable UUID notificationId) {
-            NotificationRecord record = repository.findById(notificationId);
-            return new NotificationStatus(record.id(), record.status(), record.channel(), record.updatedAt());
+            return statusLookupService.find(notificationId);
         }
 
         @GetMapping("/stats")
@@ -194,7 +201,8 @@ public class NotificationApiServiceApplication {
                             now,
                             now);
                     NotificationRecord saved = repository.insertNotification(skipped);
-                    return new NotificationAccepted(saved.id(), saved.status(), correlationId, channel, null);
+                    return new NotificationAccepted(
+                            saved.id(), UUID.randomUUID(), saved.status(), saved.createdAt(), correlationId, channel, null);
                 }
 
                 RenderedTemplate rendered = Timer.builder("template_render_duration_seconds")
@@ -230,7 +238,9 @@ public class NotificationApiServiceApplication {
                 } catch (DuplicateKeyException duplicate) {
                     meterRegistry.counter("notification_rejected_total", "reason", "duplicate_idempotency_key").increment();
                     NotificationRecord existing = repository.findByProductIdAndIdempotencyKey(request.productId(), request.idempotencyKey());
-                    return new NotificationAccepted(existing.id(), existing.status(), correlationId, existing.channel(), null);
+                    return new NotificationAccepted(
+                            existing.id(), UUID.randomUUID(), existing.status(), existing.createdAt(),
+                            correlationId, existing.channel(), null);
                 }
 
                 UUID deliveryId = UUID.randomUUID();
@@ -275,7 +285,8 @@ public class NotificationApiServiceApplication {
                         now));
 
                 meterRegistry.counter("notification_created_total", "channel", channel, "priority", priority).increment();
-                return new NotificationAccepted(notificationId, "ACCEPTED", correlationId, channel, eventId);
+                return new NotificationAccepted(
+                        notificationId, UUID.randomUUID(), "ACCEPTED", now, correlationId, channel, eventId);
             } finally {
                 requestTimer.stop(Timer.builder("notification_request_duration_seconds")
                         .description("Notification submission duration")
@@ -343,15 +354,20 @@ public class NotificationApiServiceApplication {
         }
 
         NotificationRecord findById(UUID id) {
+            return findOptionalById(id)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Notification not found: " + id));
+        }
+
+        java.util.Optional<NotificationRecord> findOptionalById(UUID id) {
             try {
-                return jdbc.queryForObject("""
+                return java.util.Optional.ofNullable(jdbc.queryForObject("""
                         SELECT id, product_id, user_id, channel, template_key, priority, status, idempotency_key,
                                destination, variables, correlation_id, created_at, updated_at
                         FROM notifications
                         WHERE id = ?
-                        """, this::mapNotification, id);
+                        """, this::mapNotification, id));
             } catch (EmptyResultDataAccessException exception) {
-                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Notification not found: " + id);
+                return java.util.Optional.empty();
             }
         }
 
@@ -659,15 +675,24 @@ public class NotificationApiServiceApplication {
     record NotificationRequest(
             @NotBlank String userId,
             @NotBlank String productId,
-            @NotBlank String channel,
+            @NotBlank @Pattern(regexp = "(?i)EMAIL|SMS|PUSH|IN_APP|WEBHOOK") String channel,
             @NotBlank String templateKey,
             Map<String, Object> variables,
-            @NotBlank String idempotencyKey,
-            @NotBlank String destination,
-            String priority) {
+            @NotBlank @Size(max = 200) String idempotencyKey,
+            @NotBlank @Size(max = 512) String destination,
+            String priority,
+            @Size(max = 160) String tenantId,
+            UUID notificationId) {
     }
 
-    record NotificationAccepted(UUID notificationId, String status, String correlationId, String channel, UUID outboxEventId) {
+    record NotificationAccepted(
+            UUID notificationId,
+            UUID requestId,
+            String status,
+            Instant acceptedAt,
+            String correlationId,
+            String channel,
+            UUID outboxEventId) {
     }
 
     record NotificationStatus(UUID notificationId, String status, String channel, Instant updatedAt) {

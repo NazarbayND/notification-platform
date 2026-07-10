@@ -13,6 +13,19 @@ data:
   POSTGRES_DB: notification_platform
   RABBITMQ_HOST: rabbitmq
   REDIS_HOST: redis
+  SPRING_DATA_REDIS_HOST: redis
+  SPRING_DATA_REDIS_PORT: "6379"
+  SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka-kafka-bootstrap.kafka.svc:9092
+  NOTIFICATION_BROKER_INTAKE: kafka
+  NOTIFICATION_BROKER_DELIVERY: rabbitmq
+  NOTIFICATION_KAFKA_TOPICS_REQUESTS: notification.requests.v1
+  NOTIFICATION_INTAKE_GLOBAL_RATE_PER_SECOND: "5000"
+  NOTIFICATION_INTAKE_PER_TENANT_RATE_PER_SECOND: "500"
+  NOTIFICATION_INTAKE_MAX_CONCURRENT_REQUESTS: "1000"
+  NOTIFICATION_INTAKE_MAX_REQUEST_BYTES: "262144"
+  NOTIFICATION_INTAKE_MAX_RECIPIENTS_PER_REQUEST: "1000"
+  NOTIFICATION_INTAKE_MAX_CHANNELS_PER_REQUEST: "5"
+  NOTIFICATION_INTAKE_KAFKA_PUBLISH_TIMEOUT: 3s
   TEMPLATE_SERVICE_URL: http://template-service:8082
   PREFERENCE_SERVICE_URL: http://preference-service:8083
   NOTIFICATION_API_URL: http://notification-api-service:8081
@@ -374,6 +387,71 @@ spec:
                 configMapKeyRef:
                   name: notification-platform-config
                   key: PREFERENCE_SERVICE_URL
+            - name: SPRING_DATA_REDIS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: SPRING_DATA_REDIS_HOST
+            - name: SPRING_DATA_REDIS_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: SPRING_DATA_REDIS_PORT
+            - name: SPRING_KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: SPRING_KAFKA_BOOTSTRAP_SERVERS
+            - name: NOTIFICATION_BROKER_INTAKE
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: NOTIFICATION_BROKER_INTAKE
+            - name: NOTIFICATION_BROKER_DELIVERY
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: NOTIFICATION_BROKER_DELIVERY
+            - name: NOTIFICATION_KAFKA_TOPICS_REQUESTS
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: NOTIFICATION_KAFKA_TOPICS_REQUESTS
+            - name: NOTIFICATION_INTAKE_GLOBAL_RATE_PER_SECOND
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: NOTIFICATION_INTAKE_GLOBAL_RATE_PER_SECOND
+            - name: NOTIFICATION_INTAKE_PER_TENANT_RATE_PER_SECOND
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: NOTIFICATION_INTAKE_PER_TENANT_RATE_PER_SECOND
+            - name: NOTIFICATION_INTAKE_MAX_CONCURRENT_REQUESTS
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: NOTIFICATION_INTAKE_MAX_CONCURRENT_REQUESTS
+            - name: NOTIFICATION_INTAKE_MAX_REQUEST_BYTES
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: NOTIFICATION_INTAKE_MAX_REQUEST_BYTES
+            - name: NOTIFICATION_INTAKE_MAX_RECIPIENTS_PER_REQUEST
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: NOTIFICATION_INTAKE_MAX_RECIPIENTS_PER_REQUEST
+            - name: NOTIFICATION_INTAKE_MAX_CHANNELS_PER_REQUEST
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: NOTIFICATION_INTAKE_MAX_CHANNELS_PER_REQUEST
+            - name: NOTIFICATION_INTAKE_KAFKA_PUBLISH_TIMEOUT
+              valueFrom:
+                configMapKeyRef:
+                  name: notification-platform-config
+                  key: NOTIFICATION_INTAKE_KAFKA_PUBLISH_TIMEOUT
           readinessProbe:
             httpGet:
               path: /actuator/health/readiness

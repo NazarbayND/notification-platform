@@ -8,7 +8,8 @@ The root project is a Maven workspace aggregator. Production behavior lives in `
 
 | Service | Port | Owns |
 | --- | ---: | --- |
-| `notification-api-service` | 8081 | Notification intake, notification status, notification DB schema, outbox writes |
+| `notification-api-service` | 8081 | Admission-controlled Kafka-first intake, acceptance status, legacy DB/outbox rollback path |
+| `shared-event-contracts` | — | Versioned Kafka JSON DTOs; no persistence entities |
 | `template-service` | 8082 | Template CRUD, rendering, variable validation |
 | `preference-service` | 8083 | User/product/channel preferences |
 | `outbox-publisher-service` | 8084 | Outbox polling, locking, RabbitMQ publishing, retry state |
@@ -25,6 +26,7 @@ Local infrastructure:
 - PostgreSQL: `localhost:5432`
 - RabbitMQ: `localhost:5672`, management UI `localhost:15672`
 - Redis: `localhost:6379`
+- Kafka: `localhost:9092`, Kafka UI `localhost:8080`
 - MailHog: SMTP `localhost:1025`, UI `localhost:8025`
 
 ## Local Run
@@ -37,15 +39,24 @@ docker compose up -d --build
 
 The root `docker-compose.yml` includes `docker-compose.microservices.yml`, so `docker compose up` starts the microservices topology.
 
-## Main Flow
+## Main Flow (Phases 1–3)
 
 1. `POST /notifications` on `notification-api-service`.
-2. Notification API calls `template-service` to render and validate the template.
-3. Notification API calls `preference-service` to check channel opt-in.
-4. Notification API writes notification, delivery, and outbox rows in one transaction.
-5. `outbox-publisher-service` locks ready events with `FOR UPDATE SKIP LOCKED`.
-6. Publisher emits a RabbitMQ delivery job to the channel queue.
-7. The channel worker consumes the job, deduplicates by `eventId`, calls its provider, and stores the delivery attempt.
+2. The API validates the body and applies Redis-backed global/per-tenant rates plus a local concurrency cap.
+3. The API publishes `NotificationRequested` to `notification.requests.v1` and waits for an `acks=all` acknowledgement within a finite deadline.
+4. The API stores short-lived Redis acceptance/idempotency state and returns `202 Accepted`.
+5. `ACCEPTED` means Kafka durably accepted the command; rendering and delivery have not happened yet.
+
+The Phase 4 orchestrator is the next migration step. Until it exists, Kafka requests are durable but are not delivered. Set `NOTIFICATION_BROKER_INTAKE=legacy` to use the previous synchronous template/preference/PostgreSQL outbox path and existing RabbitMQ workers.
+
+```json
+{
+  "notificationId": "3a6c5b82-...",
+  "requestId": "6948c028-...",
+  "status": "ACCEPTED",
+  "acceptedAt": "2026-07-10T12:00:00Z"
+}
+```
 
 ## Useful Endpoints
 
@@ -100,6 +111,13 @@ Admin BFF:
 
 ## Documentation
 
+- [Kafka-first migration plan](docs/kafka-first-migration-plan.md)
+- [Kafka-first architecture](docs/kafka-first-architecture.md)
+- [Migration baseline](docs/kafka-migration-baseline.md)
+- [Backpressure and admission control](docs/backpressure-and-admission-control.md)
+- [Event contracts](docs/event-contracts.md)
+- [Local Kafka runbook](docs/local-run-kafka.md)
+- [RabbitMQ migration and rollback](docs/rabbitmq-to-kafka-migration.md)
 - [Microservices architecture](docs/microservices-architecture.md)
 - [Migration notes](docs/refactor-to-microservices.md)
 - [Service workspace](services/README.md)

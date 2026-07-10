@@ -18,6 +18,7 @@
 
     <modules>
         <module>platform-common</module>
+        <module>shared-event-contracts</module>
         <module>notification-api-service</module>
         <module>template-service</module>
         <module>preference-service</module>
@@ -40,6 +41,11 @@
             <dependency>
                 <groupId>com.notificationplatform.microservices</groupId>
                 <artifactId>platform-common</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.notificationplatform.microservices</groupId>
+                <artifactId>shared-event-contracts</artifactId>
                 <version>${project.version}</version>
             </dependency>
         </dependencies>

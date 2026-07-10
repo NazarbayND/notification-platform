@@ -1,0 +1,74 @@
+notification:
+  broker:
+    intake: ${NOTIFICATION_BROKER_INTAKE:kafka}
+    delivery: ${NOTIFICATION_BROKER_DELIVERY:rabbitmq}
+  kafka:
+    topics:
+      requests: ${NOTIFICATION_KAFKA_TOPICS_REQUESTS:notification.requests.v1}
+  intake:
+    global-rate-per-second: ${NOTIFICATION_INTAKE_GLOBAL_RATE_PER_SECOND:5000}
+    per-tenant-rate-per-second: ${NOTIFICATION_INTAKE_PER_TENANT_RATE_PER_SECOND:500}
+    max-concurrent-requests: ${NOTIFICATION_INTAKE_MAX_CONCURRENT_REQUESTS:1000}
+    max-request-bytes: ${NOTIFICATION_INTAKE_MAX_REQUEST_BYTES:262144}
+    max-recipients-per-request: ${NOTIFICATION_INTAKE_MAX_RECIPIENTS_PER_REQUEST:1000}
+    max-channels-per-request: ${NOTIFICATION_INTAKE_MAX_CHANNELS_PER_REQUEST:5}
+    kafka-publish-timeout: ${NOTIFICATION_INTAKE_KAFKA_PUBLISH_TIMEOUT:3s}
+    acceptance-ttl: ${NOTIFICATION_INTAKE_ACCEPTANCE_TTL:20m}
+
+spring:
+  application:
+    name: ${OTEL_SERVICE_NAME:${SERVICE_NAME:notification-api-service}}
+  kafka:
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      acks: all
+      retries: 2147483647
+      compression-type: lz4
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
+        buffer.memory: 33554432
+        max.block.ms: 3000
+        delivery.timeout.ms: 3000
+        request.timeout.ms: 2000
+        spring.json.add.type.headers: false
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:localhost}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
+      timeout: 1s
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: always
+      group:
+        readiness:
+          include: readinessState,db,redis,kafka
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+  metrics:
+    tags:
+      service: ${spring.application.name}
+      environment: ${ENVIRONMENT:local}
+  tracing:
+    sampling:
+      probability: ${MANAGEMENT_TRACING_SAMPLING_PROBABILITY:1.0}
+  otlp:
+    tracing:
+      endpoint: ${MANAGEMENT_OTLP_TRACING_ENDPOINT:${OTEL_EXPORTER_OTLP_ENDPOINT:http://otel-collector:4318}/v1/traces}

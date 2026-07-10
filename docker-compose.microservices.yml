@@ -58,6 +58,58 @@ services:
       timeout: 5s
       retries: 5
 
+  kafka:
+    image: apache/kafka:3.9.1
+    container_name: notification-platform-kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_LISTENERS: CONTROLLER://:29093,PLAINTEXT://:29092,PLAINTEXT_HOST://:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_MIN_INSYNC_REPLICAS: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    ports:
+      - "9092:9092"
+    volumes:
+      - microservices-kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:29092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  kafka-topic-init:
+    image: apache/kafka:3.9.1
+    container_name: notification-platform-kafka-topic-init
+    command: ["bash", "/scripts/create-topics.sh", "kafka:29092"]
+    volumes:
+      - ./scripts/kafka:/scripts:ro
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: "no"
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:v0.7.2
+    container_name: notification-platform-kafka-ui
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+    ports:
+      - "8080:8080"
+    depends_on:
+      kafka:
+        condition: service_healthy
+
   mailhog:
     image: mailhog/mailhog
     container_name: notification-platform-ms-mailhog
@@ -77,6 +129,19 @@ services:
       SPRING_DATASOURCE_USERNAME: notification
       SPRING_DATASOURCE_PASSWORD: notification
       SPRING_FLYWAY_SCHEMAS: notification_api
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      NOTIFICATION_BROKER_INTAKE: kafka
+      NOTIFICATION_BROKER_DELIVERY: rabbitmq
+      NOTIFICATION_KAFKA_TOPICS_REQUESTS: notification.requests.v1
+      NOTIFICATION_INTAKE_GLOBAL_RATE_PER_SECOND: 5000
+      NOTIFICATION_INTAKE_PER_TENANT_RATE_PER_SECOND: 500
+      NOTIFICATION_INTAKE_MAX_CONCURRENT_REQUESTS: 1000
+      NOTIFICATION_INTAKE_MAX_REQUEST_BYTES: 262144
+      NOTIFICATION_INTAKE_MAX_RECIPIENTS_PER_REQUEST: 1000
+      NOTIFICATION_INTAKE_MAX_CHANNELS_PER_REQUEST: 5
+      NOTIFICATION_INTAKE_KAFKA_PUBLISH_TIMEOUT: 3s
       TEMPLATE_SERVICE_URL: http://template-service:8082
       PREFERENCE_SERVICE_URL: http://preference-service:8083
       MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health,prometheus
@@ -86,6 +151,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka-topic-init:
+        condition: service_completed_successfully
       template-service:
         condition: service_started
       preference-service:
@@ -435,5 +504,6 @@ volumes:
   microservices-postgres-data:
   microservices-rabbitmq-data:
   microservices-redis-data:
+  microservices-kafka-data:
   grafana-data:
   loki-data:

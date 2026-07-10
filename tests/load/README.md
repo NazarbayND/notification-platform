@@ -2,6 +2,14 @@
 
 Simple k6 load tests for `POST /notifications`.
 
+For the Kafka-first intake test and a machine-readable summary, prefer:
+
+```sh
+RATE=100 DURATION=30s ./scripts/load/intake.sh
+```
+
+The default direct-script base URL below predates the Kafka migration and uses port 8080. Set `BASE_URL=http://localhost:8081` when calling those scripts directly.
+
 ## Normal Load
 
 ```sh
