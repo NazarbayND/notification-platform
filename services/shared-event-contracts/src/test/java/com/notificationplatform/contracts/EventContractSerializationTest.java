@@ -17,7 +17,7 @@ class EventContractSerializationTest {
     @Test
     void notificationRequestedV1RoundTripsWithoutLosingContractFields() throws Exception {
         NotificationRequested event = new NotificationRequested(
-                "event-1", "notification-1", "request-1", "tenant-1", "key-1", "welcome",
+                "event-1", "notification-1", "request-1", "tenant-1", "product-1", "key-1", "welcome",
                 new NotificationRequested.Recipient("user-1", "user@example.com", null, null, null),
                 List.of("EMAIL"), Map.of("name", "Ada"), Instant.parse("2026-07-10T12:00:00Z"), 1);
 
@@ -26,6 +26,7 @@ class EventContractSerializationTest {
         NotificationRequested restored = mapper.readValue(json, NotificationRequested.class);
 
         assertThat(tree.path("schemaVersion").asInt()).isEqualTo(1);
+        assertThat(tree.path("productId").asText()).isEqualTo("product-1");
         assertThat(tree.path("recipient").path("email").asText()).isEqualTo("user@example.com");
         assertThat(tree.path("requestedChannels").get(0).asText()).isEqualTo("EMAIL");
         assertThat(tree.path("requestedAt").asText()).isEqualTo("2026-07-10T12:00:00Z");

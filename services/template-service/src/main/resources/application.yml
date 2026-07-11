@@ -1,0 +1,19 @@
+spring:
+  config:
+    import: optional:classpath:application-common.yml
+  application:
+    name: template-service
+  kafka:
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        enable.idempotence: true
+        spring.json.add.type.headers: false
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus,metrics

@@ -6,18 +6,19 @@
 notification:
   broker:
     intake: kafka
-    delivery: rabbitmq
+    delivery: kafka
 ```
 
-Set intake to `legacy` for immediate rollback. Phase 4 keeps RabbitMQ delivery while adding the orchestrator. Phase 6 migrates workers one at a time, starting with email. Kafka delivery becomes the default only after parity, integration, resilience, and load tests pass. RabbitMQ code/configuration remains temporarily for rollback.
+Kafka is now the configured default for intake and delivery. Set intake to `legacy` and delivery to `rabbitmq` for rollback. RabbitMQ code/configuration remains temporarily; remove it only after the deferred parity, resilience, and load validation has passed in the target environment.
 
 Never dual-publish delivery work without a migration ID and cross-broker deduplication. Provider calls remain at-least-once; Kafka transactions cannot make an external provider side effect exactly-once.
 
 ## Current rollback
 
 1. Set `NOTIFICATION_BROKER_INTAKE=legacy` on the API.
-2. Restart the API.
-3. Confirm template and preference services, PostgreSQL, outbox publisher, RabbitMQ, and workers are healthy.
-4. Requests already accepted into Kafka remain there for Phase 4 processing; do not replay them into the legacy path without deduplication.
+2. Set `NOTIFICATION_BROKER_DELIVERY=rabbitmq` on the orchestrator.
+3. Restart the API and orchestrator.
+4. Confirm template and preference services, PostgreSQL, outbox publisher, RabbitMQ, and workers are healthy.
+5. Requests already accepted into Kafka remain assigned to the Kafka orchestrator group; do not replay them into the legacy path without deduplication.
 
-No old tables or RabbitMQ runtime dependency has been removed in Phases 1–3.
+Old notification API tables and RabbitMQ runtime dependencies are retained for rollback until validation and a separate removal decision.

@@ -60,8 +60,8 @@ public class AdminBffServiceApplication {
                     .tag("endpoint", "dashboard")
                     .register(meterRegistry)
                     .record(() -> {
-                        NotificationStats stats = downstreamRequest("notification-api-service", () -> downstream.notificationApi.get()
-                                .uri("/notifications/stats")
+                        NotificationStats stats = downstreamRequest("notification-projection-service", () -> downstream.projection.get()
+                                .uri("/projections/notifications/stats")
                                 .retrieve()
                                 .body(NotificationStats.class));
                         if (stats == null) {
@@ -89,15 +89,16 @@ public class AdminBffServiceApplication {
                 @RequestParam(required = false) String priority,
                 @RequestParam(required = false) String dateFrom,
                 @RequestParam(required = false) String dateTo) {
-            Object[] notifications = downstreamRequest("notification-api-service", () -> downstream.notificationApi.get()
-                    .uri(uri -> uri.path("/notifications")
+            Object response = downstreamRequest("notification-projection-service", () -> downstream.projection.get()
+                    .uri(uri -> uri.path("/projections/notifications")
                             .queryParam("page", page)
                             .queryParam("size", size)
                             .queryParamIfPresent("status", java.util.Optional.ofNullable(status))
                             .queryParamIfPresent("channel", java.util.Optional.ofNullable(channel))
                             .build())
                     .retrieve()
-                    .body(Object[].class));
+                    .body(Object.class));
+            Object notifications = response instanceof Map<?, ?> pageResult ? pageResult.get("items") : response;
             return objectList(notifications).stream()
                     .filter(item -> matches(item, "productId", productId))
                     .filter(item -> matches(item, "priority", priority))
@@ -116,8 +117,8 @@ public class AdminBffServiceApplication {
                 @RequestParam(required = false) String priority,
                 @RequestParam(required = false) String dateFrom,
                 @RequestParam(required = false) String dateTo) {
-            return downstreamRequest("notification-api-service", () -> downstream.notificationApi.get()
-                    .uri(uri -> uri.path("/notifications/page")
+            return downstreamRequest("notification-projection-service", () -> downstream.projection.get()
+                    .uri(uri -> uri.path("/projections/notifications")
                             .queryParam("page", page)
                             .queryParam("size", size)
                             .queryParamIfPresent("productId", java.util.Optional.ofNullable(productId))
@@ -133,7 +134,7 @@ public class AdminBffServiceApplication {
 
         @GetMapping("/notifications/{id}")
         Object notification(@PathVariable UUID id) {
-            return downstreamRequest("notification-api-service", () -> downstream.notificationApi.get().uri("/notifications/{id}", id).retrieve().body(Object.class));
+            return downstreamRequest("notification-projection-service", () -> downstream.projection.get().uri("/projections/notifications/{id}", id).retrieve().body(Object.class));
         }
 
         @PostMapping("/notifications")
@@ -143,7 +144,8 @@ public class AdminBffServiceApplication {
 
         @GetMapping("/notifications/{id}/deliveries")
         Object notificationDeliveries(@PathVariable UUID id) {
-            return outboxEventsAsDeliveries(id);
+            return downstreamRequest("notification-projection-service", () -> downstream.projection.get()
+                    .uri("/projections/notifications/{id}/deliveries", id).retrieve().body(Object.class));
         }
 
         @GetMapping("/deliveries")
@@ -151,7 +153,7 @@ public class AdminBffServiceApplication {
                 @RequestParam(required = false) String status,
                 @RequestParam(required = false) String channel,
                 @RequestParam(required = false) String provider) {
-            return outboxEventsAsDeliveries(null).stream()
+            return projectionDeliveries().stream()
                     .filter(item -> matches(item, "status", status))
                     .filter(item -> matches(item, "channel", channel))
                     .filter(item -> matches(item, "provider", provider))
@@ -166,8 +168,8 @@ public class AdminBffServiceApplication {
                 @RequestParam(required = false) String status,
                 @RequestParam(required = false) String channel,
                 @RequestParam(required = false) String provider) {
-            return downstreamRequest("notification-api-service", () -> downstream.notificationApi.get()
-                    .uri(uri -> uri.path("/notifications/deliveries/page")
+            return downstreamRequest("notification-projection-service", () -> downstream.projection.get()
+                    .uri(uri -> uri.path("/projections/deliveries")
                             .queryParam("page", page)
                             .queryParam("size", size)
                             .queryParamIfPresent("notificationId", java.util.Optional.ofNullable(notificationRequestId))
@@ -341,6 +343,12 @@ public class AdminBffServiceApplication {
                     .toList();
         }
 
+        private List<Map<String, Object>> projectionDeliveries() {
+            Object[] deliveries = downstreamRequest("notification-projection-service", () -> downstream.projection.get()
+                    .uri("/projections/deliveries").retrieve().body(Object[].class));
+            return objectList(deliveries);
+        }
+
         private Map<String, Object> outboxEventAsDelivery(Map<?, ?> event) {
             Object payloadValue = event.get("payload");
             Map<?, ?> payload = payloadValue instanceof Map<?, ?> map ? map : Map.of();
@@ -444,6 +452,7 @@ public class AdminBffServiceApplication {
     @org.springframework.stereotype.Component
     static class Downstream {
         final RestClient notificationApi;
+        final RestClient projection;
         final RestClient template;
         final RestClient preference;
         final RestClient outboxPublisher;
@@ -456,6 +465,7 @@ public class AdminBffServiceApplication {
         Downstream(
                 RestClient.Builder builder,
                 @Value("${NOTIFICATION_API_URL:http://localhost:8081}") String notificationApiUrl,
+                @Value("${NOTIFICATION_PROJECTION_URL:http://localhost:8092}") String projectionUrl,
                 @Value("${TEMPLATE_SERVICE_URL:http://localhost:8082}") String templateUrl,
                 @Value("${PREFERENCE_SERVICE_URL:http://localhost:8083}") String preferenceUrl,
                 @Value("${OUTBOX_PUBLISHER_SERVICE_URL:http://localhost:8084}") String outboxUrl,
@@ -465,6 +475,7 @@ public class AdminBffServiceApplication {
                 @Value("${IN_APP_WORKER_SERVICE_URL:http://localhost:8089}") String inAppUrl,
                 @Value("${WEBHOOK_WORKER_SERVICE_URL:http://localhost:8090}") String webhookUrl) {
             this.notificationApi = builder.clone().baseUrl(notificationApiUrl).build();
+            this.projection = builder.clone().baseUrl(projectionUrl).build();
             this.template = builder.clone().baseUrl(templateUrl).build();
             this.preference = builder.clone().baseUrl(preferenceUrl).build();
             this.outboxPublisher = builder.clone().baseUrl(outboxUrl).build();

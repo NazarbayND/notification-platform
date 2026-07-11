@@ -25,7 +25,6 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mail.SimpleMailMessage;
@@ -157,7 +156,7 @@ public class EmailWorkerServiceApplication {
                         .tag("provider", "email")
                         .register(meterRegistry)
                         .record(() -> provider.sendEmail(new SendEmailCommand(
-                                job.destination(), job.subject(), job.body(), job.eventId().toString(), job.notificationId().toString())));
+                                job.destination(), job.subject(), job.body(), job.deliveryId().toString(), job.notificationId().toString())));
                 repository.saveAttempt(job, result);
                 meterRegistry.counter("worker_messages_processed_total", "service", "email-worker-service", "channel", "EMAIL").increment();
                 meterRegistry.counter("delivery_attempt_total", "channel", "EMAIL", "provider", result.provider(), "status", result.status()).increment();
@@ -209,12 +208,12 @@ public class EmailWorkerServiceApplication {
 
         @Transactional
         boolean markProcessing(UUID eventId) {
-            try {
-                jdbc.update("INSERT INTO processed_events (event_id, processed_at) VALUES (?, ?)", eventId, ts(Instant.now()));
-                return true;
-            } catch (DuplicateKeyException duplicate) {
-                return false;
-            }
+            int inserted=jdbc.update("INSERT INTO processed_events (event_id, processed_at) VALUES (?, ?) ON CONFLICT DO NOTHING",eventId,ts(Instant.now()));
+            if(inserted==1)return true;
+            int reclaimed=jdbc.update("""
+                DELETE FROM processed_events p WHERE p.event_id=? AND p.processed_at < now()-interval '5 minutes'
+                AND NOT EXISTS (SELECT 1 FROM delivery_attempts a WHERE a.event_id=p.event_id)""",eventId);
+            return reclaimed==1&&jdbc.update("INSERT INTO processed_events (event_id, processed_at) VALUES (?, ?) ON CONFLICT DO NOTHING",eventId,ts(Instant.now()))==1;
         }
 
         @Transactional

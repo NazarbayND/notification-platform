@@ -19,7 +19,10 @@
     <modules>
         <module>platform-common</module>
         <module>shared-event-contracts</module>
+        <module>worker-kafka-support</module>
         <module>notification-api-service</module>
+        <module>notification-orchestrator-service</module>
+        <module>notification-projection-service</module>
         <module>template-service</module>
         <module>preference-service</module>
         <module>outbox-publisher-service</module>
@@ -46,6 +49,11 @@
             <dependency>
                 <groupId>com.notificationplatform.microservices</groupId>
                 <artifactId>shared-event-contracts</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.notificationplatform.microservices</groupId>
+                <artifactId>worker-kafka-support</artifactId>
                 <version>${project.version}</version>
             </dependency>
         </dependencies>

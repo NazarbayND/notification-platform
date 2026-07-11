@@ -68,14 +68,17 @@ public class NotificationApiServiceApplication {
         private final NotificationIntakeRouter service;
         private final NotificationRepository repository;
         private final NotificationStatusLookupService statusLookupService;
+        private final ProjectionStatusClient projectionClient;
 
         NotificationController(
                 NotificationIntakeRouter service,
                 NotificationRepository repository,
-                NotificationStatusLookupService statusLookupService) {
+                NotificationStatusLookupService statusLookupService,
+                ProjectionStatusClient projectionClient) {
             this.service = service;
             this.repository = repository;
             this.statusLookupService = statusLookupService;
+            this.projectionClient = projectionClient;
         }
 
         @PostMapping
@@ -95,14 +98,16 @@ public class NotificationApiServiceApplication {
         }
 
         @GetMapping("/stats")
-        NotificationStats stats() {
+        Object stats() {
+            Object projected = projectionClient.stats();
+            if (projected != null) return projected;
             Instant todayStart = LocalDate.now(ZoneOffset.UTC).atStartOfDay().toInstant(ZoneOffset.UTC);
             long minutesToday = Math.max(1, Duration.between(todayStart, Instant.now()).toMinutes());
             return repository.stats(todayStart, minutesToday);
         }
 
         @GetMapping("/page")
-        PageResponse<NotificationRecord> page(
+        Object page(
                 @RequestParam(required = false) String productId,
                 @RequestParam(required = false) String status,
                 @RequestParam(required = false) String channel,
@@ -111,32 +116,36 @@ public class NotificationApiServiceApplication {
                 @RequestParam(required = false) String dateTo,
                 @RequestParam(defaultValue = "0") int page,
                 @RequestParam(defaultValue = "50") int size) {
-            return repository.findPage(productId, status, channel, priority, dateFrom, dateTo, page, size);
+            Object projected = projectionClient.notifications(productId,status,channel,page,size,false);
+            return projected == null ? repository.findPage(productId, status, channel, priority, dateFrom, dateTo, page, size) : projected;
         }
 
         @GetMapping("/deliveries/page")
-        PageResponse<DeliveryView> deliveriesPage(
+        Object deliveriesPage(
                 @RequestParam(required = false) UUID notificationId,
                 @RequestParam(required = false) String status,
                 @RequestParam(required = false) String channel,
                 @RequestParam(required = false) String provider,
                 @RequestParam(defaultValue = "0") int page,
                 @RequestParam(defaultValue = "50") int size) {
-            return repository.findDeliveriesPage(notificationId, status, channel, provider, page, size);
+            Object projected = projectionClient.deliveries(notificationId,status,channel,page,size);
+            return projected == null ? repository.findDeliveriesPage(notificationId, status, channel, provider, page, size) : projected;
         }
 
         @GetMapping("/{notificationId}")
-        NotificationRecord get(@PathVariable UUID notificationId) {
-            return repository.findById(notificationId);
+        Object get(@PathVariable UUID notificationId) {
+            Object projected = projectionClient.notification(notificationId);
+            return projected == null ? repository.findById(notificationId) : projected;
         }
 
         @GetMapping
-        List<NotificationRecord> list(
+        Object list(
                 @RequestParam(required = false) String status,
                 @RequestParam(required = false) String channel,
                 @RequestParam(defaultValue = "0") int page,
                 @RequestParam(defaultValue = "50") int size) {
-            return repository.findAll(status, channel, page, size);
+            Object projected = projectionClient.notifications(null,status,channel,page,size,true);
+            return projected == null ? repository.findAll(status, channel, page, size) : projected;
         }
     }
 

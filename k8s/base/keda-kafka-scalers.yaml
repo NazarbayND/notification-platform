@@ -1,0 +1,106 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: notification-orchestrator-kafka
+  namespace: notification-platform
+spec:
+  scaleTargetRef:
+    name: notification-orchestrator-service
+  minReplicaCount: 2
+  maxReplicaCount: 20
+  pollingInterval: 15
+  cooldownPeriod: 60
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: kafka-kafka-bootstrap.kafka.svc:9092
+        consumerGroup: notification-orchestrator-v1
+        topic: notification.requests.v1
+        lagThreshold: "500"
+        offsetResetPolicy: earliest
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: email-worker-kafka
+  namespace: notification-platform
+spec:
+  scaleTargetRef: {name: email-worker-service}
+  minReplicaCount: 1
+  maxReplicaCount: 30
+  triggers:
+    - type: kafka
+      metadata: {bootstrapServers: kafka-kafka-bootstrap.kafka.svc:9092, consumerGroup: email-worker-v1, topic: notification.email.v1, lagThreshold: "250", offsetResetPolicy: earliest}
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: sms-worker-kafka
+  namespace: notification-platform
+spec:
+  scaleTargetRef: {name: sms-worker-service}
+  minReplicaCount: 1
+  maxReplicaCount: 30
+  triggers:
+    - type: kafka
+      metadata: {bootstrapServers: kafka-kafka-bootstrap.kafka.svc:9092, consumerGroup: sms-worker-v1, topic: notification.sms.v1, lagThreshold: "250", offsetResetPolicy: earliest}
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: push-worker-kafka
+  namespace: notification-platform
+spec:
+  scaleTargetRef: {name: push-worker-service}
+  minReplicaCount: 1
+  maxReplicaCount: 30
+  triggers:
+    - type: kafka
+      metadata: {bootstrapServers: kafka-kafka-bootstrap.kafka.svc:9092, consumerGroup: push-worker-v1, topic: notification.push.v1, lagThreshold: "250", offsetResetPolicy: earliest}
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: in-app-worker-kafka
+  namespace: notification-platform
+spec:
+  scaleTargetRef: {name: in-app-worker-service}
+  minReplicaCount: 1
+  maxReplicaCount: 30
+  triggers:
+    - type: kafka
+      metadata: {bootstrapServers: kafka-kafka-bootstrap.kafka.svc:9092, consumerGroup: in-app-worker-v1, topic: notification.in-app.v1, lagThreshold: "250", offsetResetPolicy: earliest}
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: webhook-worker-kafka
+  namespace: notification-platform
+spec:
+  scaleTargetRef: {name: webhook-worker-service}
+  minReplicaCount: 1
+  maxReplicaCount: 30
+  triggers:
+    - type: kafka
+      metadata: {bootstrapServers: kafka-kafka-bootstrap.kafka.svc:9092, consumerGroup: webhook-worker-v1, topic: notification.webhook.v1, lagThreshold: "250", offsetResetPolicy: earliest}
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: notification-projection-kafka
+  namespace: notification-platform
+spec:
+  scaleTargetRef:
+    name: notification-projection-service
+  minReplicaCount: 2
+  maxReplicaCount: 12
+  pollingInterval: 15
+  cooldownPeriod: 60
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: kafka-kafka-bootstrap.kafka.svc:9092
+        consumerGroup: notification-projection-results-v1
+        topic: notification.delivery-results.v1
+        lagThreshold: "1000"
+        offsetResetPolicy: earliest

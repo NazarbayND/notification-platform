@@ -19,9 +19,11 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -31,6 +33,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
+@EnableScheduling
 @SpringBootApplication
 public class TemplateServiceApplication {
 
@@ -83,6 +86,12 @@ public class TemplateServiceApplication {
                     existing.createdAt(),
                     Instant.now());
             return repository.update(updated);
+        }
+
+        @DeleteMapping("/{id}")
+        @ResponseStatus(HttpStatus.NO_CONTENT)
+        void delete(@PathVariable UUID id) {
+            repository.delete(id);
         }
     }
 
@@ -279,11 +288,14 @@ public class TemplateServiceApplication {
         private final JdbcTemplate jdbc;
         private final ObjectMapper objectMapper;
         private final ProductRepository productRepository;
+        private final TemplateEventOutbox eventOutbox;
 
-        TemplateRepository(JdbcTemplate jdbc, ObjectMapper objectMapper, ProductRepository productRepository) {
+        TemplateRepository(JdbcTemplate jdbc, ObjectMapper objectMapper, ProductRepository productRepository,
+                TemplateEventOutbox eventOutbox) {
             this.jdbc = jdbc;
             this.objectMapper = objectMapper;
             this.productRepository = productRepository;
+            this.eventOutbox = eventOutbox;
         }
 
         List<Template> findAll() {
@@ -331,6 +343,7 @@ public class TemplateServiceApplication {
                     """,
                     template.id(), template.productId(), template.key(), template.channel(), template.subject(),
                     template.body(), writeJson(template.requiredVariables()), template.status(), ts(template.createdAt()), ts(template.updatedAt()));
+            eventOutbox.append("TemplateCreated", template.id(), 1, template);
             return template;
         }
 
@@ -340,12 +353,22 @@ public class TemplateServiceApplication {
             jdbc.update("""
                     UPDATE notification_templates
                     SET product_id = ?, template_key = ?, channel = ?, subject = ?, body = ?, required_variables = ?::jsonb,
-                        status = ?, updated_at = ?
+                        status = ?, updated_at = ?, aggregate_version = aggregate_version + 1
                     WHERE id = ?
                     """,
                     template.productId(), template.key(), template.channel(), template.subject(), template.body(),
                     writeJson(template.requiredVariables()), template.status(), ts(template.updatedAt()), template.id());
+            Long version = jdbc.queryForObject("SELECT aggregate_version FROM notification_templates WHERE id=?", Long.class, template.id());
+            eventOutbox.append("TemplateUpdated", template.id(), version == null ? 1 : version, template);
             return template;
+        }
+
+        @Transactional
+        void delete(UUID id) {
+            Template template = findById(id);
+            Long version = jdbc.queryForObject("SELECT aggregate_version + 1 FROM notification_templates WHERE id=?", Long.class, id);
+            eventOutbox.appendDeleted(id, version == null ? 2 : version, template);
+            jdbc.update("DELETE FROM notification_templates WHERE id=?", id);
         }
 
         private Template map(ResultSet rs, int rowNum) throws SQLException {

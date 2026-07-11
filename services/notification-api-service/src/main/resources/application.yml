@@ -1,7 +1,7 @@
 notification:
   broker:
     intake: ${NOTIFICATION_BROKER_INTAKE:kafka}
-    delivery: ${NOTIFICATION_BROKER_DELIVERY:rabbitmq}
+    delivery: ${NOTIFICATION_BROKER_DELIVERY:kafka}
   kafka:
     topics:
       requests: ${NOTIFICATION_KAFKA_TOPICS_REQUESTS:notification.requests.v1}

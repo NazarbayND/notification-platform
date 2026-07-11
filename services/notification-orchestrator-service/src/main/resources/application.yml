@@ -1,0 +1,39 @@
+spring:
+  config:
+    import: optional:classpath:application-common.yml
+  application:
+    name: notification-orchestrator-service
+  kafka:
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    listener:
+      ack-mode: record
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        enable.idempotence: true
+        spring.json.add.type.headers: false
+notification:
+  broker:
+    delivery: ${NOTIFICATION_BROKER_DELIVERY:kafka}
+  kafka:
+    topics:
+      requests: ${NOTIFICATION_KAFKA_TOPICS_REQUESTS:notification.requests.v1}
+    groups:
+      orchestrator: ${NOTIFICATION_KAFKA_GROUP_ORCHESTRATOR:notification-orchestrator-v1}
+orchestrator:
+  reference:
+    sync-fallback-enabled: ${ORCHESTRATOR_REFERENCE_SYNC_FALLBACK_ENABLED:false}
+  outbox:
+    fixed-delay-ms: ${ORCHESTRATOR_OUTBOX_FIXED_DELAY_MS:250}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus,metrics

@@ -12,7 +12,9 @@ Phase 2 provides:
 
 Every event has a globally unique string `eventId` and integer `schemaVersion`. Template/preference changes also carry `aggregateVersion`; projection consumers must ignore a version older than the stored version.
 
-`NotificationRequested` v1 contains notification/request/event IDs, tenant and idempotency key, template ID/key, recipient addresses, requested channels, variables, timestamp, and schema version. JSON serialization compatibility tests assert the v1 names and round-trip behavior.
+`NotificationRequested` v1 contains notification/request/event IDs, tenant, product and idempotency key, template ID/key, recipient addresses, requested channels, variables, timestamp, and schema version. JSON serialization compatibility tests assert the v1 names and round-trip behavior.
+
+`DeliveryRequested` also carries retry lineage: original topic/partition/offset, attempt number, first/last failure timestamps, and bounded error code/message fields.
 
 Compatibility rules:
 
@@ -24,4 +26,4 @@ Compatibility rules:
 
 ## Test result
 
-`EventContractSerializationTest` passed all 3 tests on 2026-07-10. It verifies `NotificationRequested` v1 round-trip field names and ISO-8601 timestamps, nullable delivery/status failure fields, and aggregate-version preservation for stale projection-event protection.
+`EventContractSerializationTest` passed all 3 tests on 2026-07-10 for the Phase 3 contract. It now also asserts `productId`; the Phase 4–8 contract changes have not been run yet, by design for this implementation pass.

@@ -133,7 +133,8 @@ services:
       SPRING_DATA_REDIS_PORT: 6379
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       NOTIFICATION_BROKER_INTAKE: kafka
-      NOTIFICATION_BROKER_DELIVERY: rabbitmq
+      NOTIFICATION_BROKER_DELIVERY: kafka
+      NOTIFICATION_PROJECTION_URL: http://notification-projection-service:8092
       NOTIFICATION_KAFKA_TOPICS_REQUESTS: notification.requests.v1
       NOTIFICATION_INTAKE_GLOBAL_RATE_PER_SECOND: 5000
       NOTIFICATION_INTAKE_PER_TENANT_RATE_PER_SECOND: 500
@@ -172,6 +173,7 @@ services:
       SPRING_DATASOURCE_USERNAME: notification
       SPRING_DATASOURCE_PASSWORD: notification
       SPRING_FLYWAY_SCHEMAS: template
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health,prometheus
       MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
     ports:
@@ -179,6 +181,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      kafka-topic-init:
+        condition: service_completed_successfully
 
   preference-service:
     build:
@@ -194,6 +198,7 @@ services:
       SPRING_FLYWAY_SCHEMAS: preference
       SPRING_DATA_REDIS_HOST: redis
       SPRING_DATA_REDIS_PORT: 6379
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health,prometheus
       MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
     ports:
@@ -203,6 +208,67 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      kafka-topic-init:
+        condition: service_completed_successfully
+
+  notification-orchestrator-service:
+    build:
+      context: ./services/notification-orchestrator-service
+    image: notification-platform/notification-orchestrator-service:local
+    environment:
+      <<: *observability-env
+      OTEL_SERVICE_NAME: notification-orchestrator-service
+      SERVER_PORT: 8091
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/notification_platform?currentSchema=notification_orchestrator
+      SPRING_DATASOURCE_USERNAME: notification
+      SPRING_DATASOURCE_PASSWORD: notification
+      SPRING_FLYWAY_SCHEMAS: notification_orchestrator
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_USERNAME: notification
+      SPRING_RABBITMQ_PASSWORD: notification
+      NOTIFICATION_BROKER_DELIVERY: kafka
+      TEMPLATE_SERVICE_URL: http://template-service:8082
+      PREFERENCE_SERVICE_URL: http://preference-service:8083
+      ORCHESTRATOR_REFERENCE_SYNC_FALLBACK_ENABLED: "true"
+      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health,prometheus
+      MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
+    ports:
+      - "8091:8091"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      kafka-topic-init:
+        condition: service_completed_successfully
+      template-service:
+        condition: service_started
+      preference-service:
+        condition: service_started
+
+  notification-projection-service:
+    build:
+      context: ./services/notification-projection-service
+    image: notification-platform/notification-projection-service:local
+    environment:
+      <<: *observability-env
+      OTEL_SERVICE_NAME: notification-projection-service
+      SERVER_PORT: 8092
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/notification_platform?currentSchema=notification_projection
+      SPRING_DATASOURCE_USERNAME: notification
+      SPRING_DATASOURCE_PASSWORD: notification
+      SPRING_FLYWAY_SCHEMAS: notification_projection
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health,prometheus
+      MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
+    ports:
+      - "8092:8092"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka-topic-init:
+        condition: service_completed_successfully
 
   outbox-publisher-service:
     build:
@@ -246,6 +312,7 @@ services:
       SPRING_DATASOURCE_USERNAME: notification
       SPRING_DATASOURCE_PASSWORD: notification
       SPRING_FLYWAY_SCHEMAS: delivery_email
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       SPRING_RABBITMQ_HOST: rabbitmq
       SPRING_RABBITMQ_USERNAME: notification
       SPRING_RABBITMQ_PASSWORD: notification
@@ -263,6 +330,8 @@ services:
         condition: service_healthy
       mailhog:
         condition: service_started
+      kafka-topic-init:
+        condition: service_completed_successfully
 
   sms-worker-service:
     build:
@@ -276,6 +345,7 @@ services:
       SPRING_DATASOURCE_USERNAME: notification
       SPRING_DATASOURCE_PASSWORD: notification
       SPRING_FLYWAY_SCHEMAS: delivery_sms
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       SPRING_RABBITMQ_HOST: rabbitmq
       SPRING_RABBITMQ_USERNAME: notification
       SPRING_RABBITMQ_PASSWORD: notification
@@ -291,6 +361,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      kafka-topic-init:
+        condition: service_completed_successfully
 
   push-worker-service:
     build:
@@ -304,6 +376,7 @@ services:
       SPRING_DATASOURCE_USERNAME: notification
       SPRING_DATASOURCE_PASSWORD: notification
       SPRING_FLYWAY_SCHEMAS: delivery_push
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       SPRING_RABBITMQ_HOST: rabbitmq
       SPRING_RABBITMQ_USERNAME: notification
       SPRING_RABBITMQ_PASSWORD: notification
@@ -319,6 +392,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      kafka-topic-init:
+        condition: service_completed_successfully
 
   in-app-worker-service:
     build:
@@ -332,6 +407,7 @@ services:
       SPRING_DATASOURCE_USERNAME: notification
       SPRING_DATASOURCE_PASSWORD: notification
       SPRING_FLYWAY_SCHEMAS: delivery_in_app
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       SPRING_RABBITMQ_HOST: rabbitmq
       SPRING_RABBITMQ_USERNAME: notification
       SPRING_RABBITMQ_PASSWORD: notification
@@ -347,6 +423,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      kafka-topic-init:
+        condition: service_completed_successfully
 
   webhook-worker-service:
     build:
@@ -360,6 +438,7 @@ services:
       SPRING_DATASOURCE_USERNAME: notification
       SPRING_DATASOURCE_PASSWORD: notification
       SPRING_FLYWAY_SCHEMAS: delivery_webhook
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       SPRING_RABBITMQ_HOST: rabbitmq
       SPRING_RABBITMQ_USERNAME: notification
       SPRING_RABBITMQ_PASSWORD: notification
@@ -375,6 +454,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      kafka-topic-init:
+        condition: service_completed_successfully
 
   admin-bff-service:
     build:
@@ -385,6 +466,7 @@ services:
       OTEL_SERVICE_NAME: admin-bff-service
       SERVER_PORT: 8088
       NOTIFICATION_API_URL: http://notification-api-service:8081
+      NOTIFICATION_PROJECTION_URL: http://notification-projection-service:8092
       TEMPLATE_SERVICE_URL: http://template-service:8082
       PREFERENCE_SERVICE_URL: http://preference-service:8083
       OUTBOX_PUBLISHER_SERVICE_URL: http://outbox-publisher-service:8084
@@ -401,6 +483,7 @@ services:
       - notification-api-service
       - template-service
       - preference-service
+      - notification-projection-service
       - in-app-worker-service
       - webhook-worker-service
 
@@ -430,6 +513,8 @@ services:
       - notification-api-service
       - template-service
       - preference-service
+      - notification-orchestrator-service
+      - notification-projection-service
       - outbox-publisher-service
       - email-worker-service
       - sms-worker-service

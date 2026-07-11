@@ -14,9 +14,11 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -27,6 +29,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
+@EnableScheduling
 @SpringBootApplication
 public class PreferenceServiceApplication {
 
@@ -82,6 +85,12 @@ public class PreferenceServiceApplication {
             return repository.findById(id);
         }
 
+        @DeleteMapping("/{id}")
+        @org.springframework.web.bind.annotation.ResponseStatus(HttpStatus.NO_CONTENT)
+        void delete(@PathVariable UUID id) {
+            repository.delete(id);
+        }
+
         @GetMapping("/check")
         PreferenceDecision check(
                 @RequestParam String userId,
@@ -98,9 +107,11 @@ public class PreferenceServiceApplication {
     @Repository
     static class PreferenceRepository {
         private final JdbcTemplate jdbc;
+        private final PreferenceEventOutbox eventOutbox;
 
-        PreferenceRepository(JdbcTemplate jdbc) {
+        PreferenceRepository(JdbcTemplate jdbc, PreferenceEventOutbox eventOutbox) {
             this.jdbc = jdbc;
+            this.eventOutbox = eventOutbox;
         }
 
         List<Preference> findAll(String productId, String userId, int page, int size) {
@@ -157,27 +168,42 @@ public class PreferenceServiceApplication {
         Preference upsert(PreferenceRequest request) {
             UUID id = UUID.randomUUID();
             Instant now = Instant.now();
-            return jdbc.queryForObject("""
-                    INSERT INTO user_notification_preferences (id, user_id, product_id, channel, allowed, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+            Preference preference = jdbc.queryForObject("""
+                    INSERT INTO user_notification_preferences (id, user_id, product_id, channel, allowed, created_at, updated_at, aggregate_version)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 1)
                     ON CONFLICT (user_id, product_id, channel)
-                    DO UPDATE SET allowed = EXCLUDED.allowed, updated_at = EXCLUDED.updated_at
+                    DO UPDATE SET allowed = EXCLUDED.allowed, updated_at = EXCLUDED.updated_at,
+                                  aggregate_version = user_notification_preferences.aggregate_version + 1
                     RETURNING id, user_id, product_id, channel, allowed, created_at, updated_at
                     """, this::map, id, request.userId(), request.productId(), request.channel().toUpperCase(), request.allowed(), ts(now), ts(now));
+            Long version = jdbc.queryForObject("SELECT aggregate_version FROM user_notification_preferences WHERE id=?", Long.class, preference.id());
+            eventOutbox.append(version != null && version == 1 ? "PreferenceCreated" : "PreferenceUpdated",
+                    version == null ? 1 : version, preference);
+            return preference;
         }
 
         @Transactional
         Preference update(UUID id, PreferenceRequest request) {
             Preference updated = jdbc.queryForObject("""
                     UPDATE user_notification_preferences
-                    SET user_id = ?, product_id = ?, channel = ?, allowed = ?, updated_at = ?
+                    SET user_id = ?, product_id = ?, channel = ?, allowed = ?, updated_at = ?, aggregate_version=aggregate_version+1
                     WHERE id = ?
                     RETURNING id, user_id, product_id, channel, allowed, created_at, updated_at
                     """, this::map, request.userId(), request.productId(), request.channel().toUpperCase(), request.allowed(), ts(Instant.now()), id);
             if (updated == null) {
                 throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Preference not found: " + id);
             }
+            Long version = jdbc.queryForObject("SELECT aggregate_version FROM user_notification_preferences WHERE id=?", Long.class, id);
+            eventOutbox.append("PreferenceUpdated", version == null ? 1 : version, updated);
             return updated;
+        }
+
+        @Transactional
+        void delete(UUID id) {
+            Preference preference = findById(id);
+            Long version = jdbc.queryForObject("SELECT aggregate_version + 1 FROM user_notification_preferences WHERE id=?", Long.class, id);
+            eventOutbox.append("PreferenceDeleted", version == null ? 2 : version, preference);
+            jdbc.update("DELETE FROM user_notification_preferences WHERE id=?", id);
         }
 
         private Preference map(ResultSet rs, int rowNum) throws SQLException {

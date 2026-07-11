@@ -1,0 +1,128 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-orchestrator-service
+  namespace: notification-platform
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: notification-orchestrator-service
+  template:
+    metadata:
+      labels:
+        app: notification-orchestrator-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /actuator/prometheus
+        prometheus.io/port: "8091"
+    spec:
+      containers:
+        - name: notification-orchestrator-service
+          image: notification-platform/notification-orchestrator-service:local
+          ports:
+            - containerPort: 8091
+          envFrom:
+            - configMapRef:
+                name: notification-platform-config
+          env:
+            - name: SERVER_PORT
+              value: "8091"
+            - name: SPRING_DATASOURCE_URL
+              value: jdbc:postgresql://postgres:5432/notification_platform?currentSchema=notification_orchestrator
+            - name: SPRING_FLYWAY_SCHEMAS
+              value: notification_orchestrator
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                secretKeyRef: {name: notification-platform-secrets, key: POSTGRES_USER}
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: notification-platform-secrets, key: POSTGRES_PASSWORD}
+            - name: SPRING_RABBITMQ_HOST
+              valueFrom:
+                configMapKeyRef: {name: notification-platform-config, key: RABBITMQ_HOST}
+            - name: SPRING_RABBITMQ_USERNAME
+              valueFrom:
+                secretKeyRef: {name: notification-platform-secrets, key: RABBITMQ_USER}
+            - name: SPRING_RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: notification-platform-secrets, key: RABBITMQ_PASSWORD}
+          readinessProbe:
+            httpGet: {path: /actuator/health/readiness, port: 8091}
+            initialDelaySeconds: 20
+          livenessProbe:
+            httpGet: {path: /actuator/health/liveness, port: 8091}
+            initialDelaySeconds: 40
+          resources:
+            requests: {cpu: 250m, memory: 384Mi}
+            limits: {cpu: "2", memory: 1Gi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: notification-orchestrator-service
+  namespace: notification-platform
+spec:
+  selector: {app: notification-orchestrator-service}
+  ports:
+    - {port: 8091, targetPort: 8091}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-projection-service
+  namespace: notification-platform
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: notification-projection-service
+  template:
+    metadata:
+      labels:
+        app: notification-projection-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /actuator/prometheus
+        prometheus.io/port: "8092"
+    spec:
+      containers:
+        - name: notification-projection-service
+          image: notification-platform/notification-projection-service:local
+          ports:
+            - containerPort: 8092
+          envFrom:
+            - configMapRef:
+                name: notification-platform-config
+          env:
+            - name: SERVER_PORT
+              value: "8092"
+            - name: SPRING_DATASOURCE_URL
+              value: jdbc:postgresql://postgres:5432/notification_platform?currentSchema=notification_projection
+            - name: SPRING_FLYWAY_SCHEMAS
+              value: notification_projection
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                secretKeyRef: {name: notification-platform-secrets, key: POSTGRES_USER}
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: notification-platform-secrets, key: POSTGRES_PASSWORD}
+          readinessProbe:
+            httpGet: {path: /actuator/health/readiness, port: 8092}
+            initialDelaySeconds: 20
+          livenessProbe:
+            httpGet: {path: /actuator/health/liveness, port: 8092}
+            initialDelaySeconds: 40
+          resources:
+            requests: {cpu: 250m, memory: 384Mi}
+            limits: {cpu: "2", memory: 1Gi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: notification-projection-service
+  namespace: notification-platform
+spec:
+  selector: {app: notification-projection-service}
+  ports:
+    - {port: 8092, targetPort: 8092}

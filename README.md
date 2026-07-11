@@ -12,6 +12,8 @@ The root project is a Maven workspace aggregator. Production behavior lives in `
 | `shared-event-contracts` | — | Versioned Kafka JSON DTOs; no persistence entities |
 | `template-service` | 8082 | Template CRUD, rendering, variable validation |
 | `preference-service` | 8083 | User/product/channel preferences |
+| `notification-orchestrator-service` | 8091 | Durable request orchestration, local reference projections, delivery/status outbox |
+| `notification-projection-service` | 8092 | Rebuildable notification and delivery query model |
 | `outbox-publisher-service` | 8084 | Outbox polling, locking, RabbitMQ publishing, retry state |
 | `email-worker-service` | 8085 | Email delivery attempts, SMTP/test email providers |
 | `sms-worker-service` | 8086 | SMS delivery attempts and local SMS test inbox |
@@ -19,6 +21,7 @@ The root project is a Maven workspace aggregator. Production behavior lives in `
 | `admin-bff-service` | 8088 | Admin aggregation across services |
 | `in-app-worker-service` | 8089 | In-app delivery attempts and user in-app notifications |
 | `webhook-worker-service` | 8090 | Webhook delivery attempts and local webhook receiver |
+| `worker-kafka-support` | — | Shared Kafka retry, DLQ, concurrency, rate-limit, and result publishing support |
 | `admin-frontend` | 5173 | Admin UI |
 
 Local infrastructure:
@@ -39,15 +42,17 @@ docker compose up -d --build
 
 The root `docker-compose.yml` includes `docker-compose.microservices.yml`, so `docker compose up` starts the microservices topology.
 
-## Main Flow (Phases 1–3)
+## Main Flow (Phases 1–8)
 
 1. `POST /notifications` on `notification-api-service`.
 2. The API validates the body and applies Redis-backed global/per-tenant rates plus a local concurrency cap.
 3. The API publishes `NotificationRequested` to `notification.requests.v1` and waits for an `acks=all` acknowledgement within a finite deadline.
 4. The API stores short-lived Redis acceptance/idempotency state and returns `202 Accepted`.
-5. `ACCEPTED` means Kafka durably accepted the command; rendering and delivery have not happened yet.
+5. The orchestrator deduplicates durably, resolves its event-fed template/preference projections, and writes channel commands plus status events through its own outbox.
+6. Kafka channel workers persist attempts, publish results, and route transient failures through 1m/5m/30m retry topics before DLQ.
+7. The projection service consumes request, status, and result topics for API/admin reads.
 
-The Phase 4 orchestrator is the next migration step. Until it exists, Kafka requests are durable but are not delivered. Set `NOTIFICATION_BROKER_INTAKE=legacy` to use the previous synchronous template/preference/PostgreSQL outbox path and existing RabbitMQ workers.
+`ACCEPTED` means Kafka durably accepted the command; it does not mean provider delivery succeeded. Kafka is the default intake and delivery broker. The legacy notification API outbox publisher and RabbitMQ consumers remain available only as a rollback path.
 
 ```json
 {
@@ -66,6 +71,13 @@ Notification API:
 - `GET http://localhost:8081/notifications`
 - `GET http://localhost:8081/notifications/{id}`
 - `GET http://localhost:8081/notifications/{id}/status`
+
+Projection API:
+
+- `GET http://localhost:8092/projections/notifications?tenantId={tenantId}`
+- `GET http://localhost:8092/projections/notifications/{id}`
+- `GET http://localhost:8092/projections/notifications/{id}/deliveries`
+- `GET http://localhost:8092/projections/deliveries`
 
 Templates:
 
@@ -118,6 +130,4 @@ Admin BFF:
 - [Event contracts](docs/event-contracts.md)
 - [Local Kafka runbook](docs/local-run-kafka.md)
 - [RabbitMQ migration and rollback](docs/rabbitmq-to-kafka-migration.md)
-- [Microservices architecture](docs/microservices-architecture.md)
-- [Migration notes](docs/refactor-to-microservices.md)
 - [Service workspace](services/README.md)

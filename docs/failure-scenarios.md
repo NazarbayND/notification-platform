@@ -15,7 +15,7 @@ sequenceDiagram
 
 The API must not create legacy notification/outbox rows in Kafka mode and must not wait for a generic HTTP timeout.
 
-## Provider slowdown (target Phase 6)
+## Provider slowdown
 
 ```mermaid
 flowchart LR
@@ -28,7 +28,7 @@ flowchart LR
 
 Other channel partitions remain independent. Provider quotas bound useful concurrency even when lag-based autoscaling requests more replicas.
 
-## Projection database outage (target Phase 7)
+## Projection database outage
 
 ```mermaid
 sequenceDiagram
@@ -49,4 +49,4 @@ sequenceDiagram
 
 ## Executed result
 
-On 2026-07-10 the gated Kafka-outage scenario passed: the broker was stopped, `POST /notifications` returned HTTP `503` within the configured publication deadline, the response was a structured problem document, and the broker restarted healthy. Projection/provider outage scenarios remain pending because their Kafka consumers are introduced in later phases.
+On 2026-07-10 the gated Kafka-outage scenario passed: the broker was stopped, `POST /notifications` returned HTTP `503` within the configured publication deadline, the response was a structured problem document, and the broker restarted healthy. Projection/provider outage scenarios remain pending and were not run during the Phase 4–8 implementation pass.

@@ -1,25 +1,23 @@
 # Kafka-First Architecture
 
-## Current migration state (Phases 1–3)
+## Current migration state (Phases 1–8 implemented)
 
-Kafka is now the first durable write when `notification.broker.intake=kafka`. The legacy synchronous DB/outbox path remains available for rollback. Delivery still uses RabbitMQ until the orchestrator and worker migration phases.
+Kafka is the first durable intake write and the default delivery transport. The legacy synchronous DB/outbox and RabbitMQ path remains available for rollback.
 
 ```mermaid
 flowchart LR
     C[Client] --> API[notification-api-service]
     API --> AC[Redis admission + acceptance cache]
     API -->|durable NotificationRequested| K[(notification.requests.v1)]
-    API -. legacy flag .-> T[template-service]
-    API -. legacy flag .-> P[preference-service]
-    API -. legacy flag .-> DB[(notification_api PostgreSQL)]
-    DB -. legacy outbox .-> O[outbox-publisher-service]
-    O --> R[(RabbitMQ)]
-    R --> W[existing channel workers]
+    K --> ORCH[notification-orchestrator-service]
+    ORCH --> CH[(Kafka channel topics)]
+    CH --> W[Kafka channel workers]
+    W --> RES[(delivery results)]
+    K & RES --> PROJ[notification-projection-service]
+    API -. rollback flag .-> DB[(legacy DB/outbox)]
 ```
 
-The Phase 4 target adds `notification-orchestrator-service`, which consumes requests and temporarily publishes compatible RabbitMQ jobs. Later phases introduce channel Kafka topics, Kafka workers, result/status topics, and `notification-projection-service`.
-
-Existing UUID identifiers are retained in Phases 1–3 to preserve API and PostgreSQL compatibility; the event contract treats IDs as opaque strings, so a later producer may use ULIDs without changing field types. The existing single-recipient/single-channel request shape is also retained at this safe boundary.
+UUID identifiers are retained for API and PostgreSQL compatibility; event contracts treat IDs as opaque strings. The current HTTP contract remains single-recipient/single-channel, while the orchestrator is structured to emit a child command for every requested channel.
 
 ```mermaid
 flowchart LR
@@ -62,13 +60,13 @@ sequenceDiagram
     end
 ```
 
-`ACCEPTED` means Kafka acknowledged the command under the configured producer durability settings. It does not mean rendering, preference evaluation, scheduling, or provider delivery succeeded. The permanent query projection can lag; `GET /notifications/{id}/status` checks PostgreSQL first, then Redis acceptance state.
+`ACCEPTED` means Kafka acknowledged the command under the configured producer durability settings. It does not mean rendering, preference evaluation, scheduling, or provider delivery succeeded. The permanent query projection can lag; status lookup checks the projection first, legacy storage second, then Redis acceptance state.
 
 ## Ordering and partitioning
 
-Intake records use `tenantId:recipientId` as the stable key. Ordering exists only within a partition. Global ordering is not provided. A request currently represents one recipient and one channel; Phase 4 will create child delivery commands so each recipient can be partitioned independently. Partition count is configurable and is never assumed to equal worker count.
+Intake and delivery records use `tenantId:recipientId` as the stable key. Ordering exists only within a partition. Global ordering is not provided. Partition count is configurable and is never assumed to equal worker count.
 
-## Successful delivery sequence (target)
+## Successful delivery sequence
 
 ```mermaid
 sequenceDiagram
@@ -87,7 +85,7 @@ sequenceDiagram
     R->>Q: project result idempotently
 ```
 
-## Projection rebuild (target)
+## Projection rebuild
 
 ```mermaid
 flowchart LR
@@ -100,4 +98,4 @@ flowchart LR
 
 ## Outbox decision
 
-Kafka-first notification intake removes the initial database/Kafka dual write: the API does not create notification, delivery, or outbox rows in Kafka mode. The old tables and code remain for rollback. Transactional outboxes remain the planned mechanism for template/preference database changes because those services must atomically update their owned database state and emit change events.
+Kafka-first notification intake removes the initial database/Kafka dual write: the API does not create notification, delivery, or outbox rows in Kafka mode. The old tables and code remain for rollback. The orchestrator, template service, and preference service each use a service-owned transactional outbox for their database/event boundary.

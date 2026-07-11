@@ -1,0 +1,23 @@
+spring:
+  config:
+    import: optional:classpath:application-common.yml
+  application:
+    name: webhook-worker-service
+  kafka:
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        enable.idempotence: true
+    listener:
+      ack-mode: manual_immediate
+worker:
+  provider:
+    max-concurrency: ${WORKER_PROVIDER_MAX_CONCURRENCY:32}
+    rate-per-second: ${WORKER_PROVIDER_RATE_PER_SECOND:100}

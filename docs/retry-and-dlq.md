@@ -1,10 +1,10 @@
 # Retry and DLQ Design
 
-Phase 2 creates the 1-minute, 5-minute, 30-minute, and DLQ topics for every channel. Workers do not consume them yet; RabbitMQ delivery remains active through Phase 3.
+Every channel worker consumes its primary topic plus 1-minute, 5-minute, and 30-minute retry topics. Exhausted and malformed events are published to the channel DLQ. RabbitMQ consumers remain only for rollback.
 
-Phase 6 will classify timeout, reset, provider 429/5xx, DNS, and temporary network failures as transient. Invalid address/payload, unsupported channel, missing template data, and non-retryable provider 4xx responses are permanent. Transient failures move through non-blocking retry topics with jitter; consumers must not sleep.
+Timeout, reset, provider 429/5xx, DNS, and temporary network failures are treated as transient. Invalid payload/address, unsupported channel, missing data, and non-retryable provider errors are permanent. Transient failures move through timestamp-delayed retry topics; consumers use Kafka pause/nack timing and do not sleep.
 
-Retry records preserve original topic/partition/offset, attempt, first/last failure timestamps, and bounded error details. Manual replay will retain notification/delivery IDs, create a new replay event ID, record the actor, and cap replay loops. DLQ inspection/replay endpoints are deferred until the first Kafka worker migration.
+Retry records preserve original topic/partition/offset, attempt, first/last failure timestamps, and bounded error details. Automated retries retain notification/delivery IDs and create a new event ID. Operator-facing manual DLQ replay is not yet exposed; replay must retain IDs, record the actor, and cap loops when added.
 
 ```mermaid
 flowchart LR

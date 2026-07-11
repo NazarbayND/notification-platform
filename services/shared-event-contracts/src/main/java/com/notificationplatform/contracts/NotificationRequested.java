@@ -10,6 +10,7 @@ public record NotificationRequested(
         String notificationId,
         String requestId,
         String tenantId,
+        String productId,
         String idempotencyKey,
         String templateId,
         Recipient recipient,
@@ -19,6 +20,7 @@ public record NotificationRequested(
         int schemaVersion) {
 
     public NotificationRequested {
+        productId = productId == null || productId.isBlank() ? tenantId : productId;
         requestedChannels = requestedChannels == null ? List.of() : List.copyOf(requestedChannels);
         variables = variables == null ? Map.of() : Map.copyOf(variables);
     }

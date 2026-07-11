@@ -11,6 +11,8 @@ Covered services:
 - `notification-api-service`
 - `template-service`
 - `preference-service`
+- `notification-orchestrator-service`
+- `notification-projection-service`
 - `outbox-publisher-service`
 - `email-worker-service`
 - `sms-worker-service`
@@ -57,6 +59,7 @@ Primary panels cover:
 - Preference check volume and latency
 - Outbox pending, processing, failed, dead letter, oldest pending age, batch size, publish latency, lock wait latency
 - Worker consumed, processed, failed, duplicate skipped, processing latency
+- Kafka intake/orchestrator/projection latency, retry count, DLQ count, and active provider tasks
 - Delivery attempts by channel/provider/status
 - Provider request latency and errors
 - Admin BFF downstream errors
@@ -95,6 +98,13 @@ Custom application metrics include:
 - `webhook_retry_total`
 - `admin_bff_request_duration_seconds`
 - `admin_bff_downstream_error_total`
+- `orchestrator_requests_processed_total`
+- `orchestrator_generated_deliveries_total`
+- `orchestrator_outbox_published_total`
+- `projection_update_latency`
+- `worker_retries_total`
+- `worker_dlq_total`
+- `worker_active_tasks`
 
 ## Correlation And Tracing
 
@@ -106,7 +116,7 @@ All backend HTTP requests pass through a correlation filter:
 - Adds it to MDC for JSON logs
 - Propagates it on `RestClient` calls
 
-Outbox publishing forwards correlation metadata to RabbitMQ headers. Worker consumers read `X-Correlation-Id` and add it to MDC alongside `eventId`, `notificationId`, and `channel`.
+Legacy outbox publishing forwards correlation metadata to RabbitMQ headers. Kafka records retain event, notification, delivery, tenant, and recipient identifiers in their payloads and stable keys for cross-service investigation.
 
 Traces are exported to:
 
@@ -184,8 +194,8 @@ Then submit a notification with an `X-Correlation-Id` header and confirm:
 
 ## Failure Scenarios
 
-- Broker down: outbox publisher records failures and schedules retry/backoff; backlog and oldest age alerts fire.
-- Worker crash: RabbitMQ redelivers unacked messages; idempotency counters show duplicate skips when already processed.
-- Publisher crash after publish: duplicate broker delivery can happen; workers dedupe by event id.
+- Broker down: intake fails within its deadline; service-owned outboxes retain unpublished changes and expose failures.
+- Worker crash: Kafka redelivers uncommitted records; worker attempt tables deduplicate by event id.
+- Publisher crash after publish: duplicate Kafka delivery can happen; orchestrator/projection/worker consumers are idempotent.
 - Provider failure: worker saves a failed delivery attempt and increments provider error metrics.
 - Duplicate event: worker skips using `processed_events` and increments `worker_duplicate_events_skipped_total`.

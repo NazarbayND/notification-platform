@@ -8,13 +8,15 @@ The application manifests intentionally do not install a production Kafka cluste
 kafka-kafka-bootstrap.kafka.svc:9092
 ```
 
-Install/manage Kafka separately with Strimzi, Bitnami, or a managed Kafka provider, then override `SPRING_KAFKA_BOOTSTRAP_SERVERS`. The API manifest also exposes broker mode, topic, admission limits, Redis endpoint, and publish timeout through the ConfigMap. Keep `NOTIFICATION_BROKER_DELIVERY=rabbitmq` until the worker migration is complete.
+Install/manage Kafka separately with Strimzi, Bitnami, or a managed Kafka provider, then override `SPRING_KAFKA_BOOTSTRAP_SERVERS`. Kafka is the default intake and delivery broker; RabbitMQ remains deployed for the explicit rollback mode.
 
 This project uses plain Kubernetes manifests for local learning and testing.
 
 ## Files
 
 - `k8s/base/microservices.yaml` deploys the application platform.
+- `k8s/base/kafka-migration-services.yaml` deploys the orchestrator and projection service.
+- `k8s/base/keda-kafka-scalers.yaml` defines Kafka-lag scaling and requires KEDA CRDs.
 - `k8s/observability/observability.yaml` deploys Prometheus, Grafana, Loki, Jaeger, Promtail, and the OpenTelemetry Collector.
 
 ## Namespace
@@ -37,11 +39,11 @@ observability
 
 - Infrastructure: `postgres`, `rabbitmq`, `redis`, `mailhog`
 - API services: `notification-api-service`, `template-service`, `preference-service`
-- Background services: `outbox-publisher-service`
+- Background services: `notification-orchestrator-service`, `notification-projection-service`, and legacy `outbox-publisher-service`
 - Workers: `email-worker-service`, `sms-worker-service`, `push-worker-service`, `in-app-worker-service`, `webhook-worker-service`
 - Admin: `admin-bff-service`, `admin-frontend`
 
-Each application service has a `Deployment`, `Service`, resource requests/limits, readiness/liveness probes, and an HPA.
+Each application service has a `Deployment`, `Service`, resource requests/limits, and readiness/liveness probes. Kafka consumers use KEDA lag scalers; non-consumer workloads retain CPU HPAs where configured.
 
 ## Configuration
 
@@ -84,6 +86,8 @@ Apply the platform:
 
 ```bash
 kubectl apply -f k8s/base/microservices.yaml
+kubectl apply -f k8s/base/kafka-migration-services.yaml
+kubectl apply -f k8s/base/keda-kafka-scalers.yaml
 ```
 
 Apply observability:
@@ -97,7 +101,7 @@ Check status:
 ```bash
 kubectl -n notification-platform get pods
 kubectl -n notification-platform get svc
-kubectl -n notification-platform get hpa
+kubectl -n notification-platform get hpa,scaledobject
 ```
 
 ## Local Access
@@ -137,6 +141,6 @@ kubectl -n observability port-forward svc/jaeger 16686:16686
 ## Notes
 
 - The manifests use local image tags such as `notification-platform/admin-frontend:local`; load or build those images into the cluster before applying.
-- Replicas and HPA minimums are set low for local kind usage.
-- If HPA targets show `<unknown>`, install metrics-server in the cluster. This does not block normal pod startup.
+- Replicas and scaling minimums are set low for local kind usage.
+- Install KEDA before applying Kafka `ScaledObject` resources; install metrics-server for CPU HPAs.
 - The local Postgres deployment does not define persistent volumes, so data can be lost when the pod is recreated.

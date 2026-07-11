@@ -53,6 +53,8 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.server.ResponseStatusException;
 
 @Validated
@@ -229,6 +231,7 @@ class KafkaNotificationIntakeService {
                 notificationId.toString(),
                 requestId.toString(),
                 tenantId,
+                request.productId(),
                 request.idempotencyKey(),
                 request.templateKey(),
                 recipient(request, channel),
@@ -442,15 +445,24 @@ final class RedisAdmissionControlKey {
 class NotificationStatusLookupService {
     private final NotificationApiServiceApplication.NotificationRepository repository;
     private final AcceptanceCache acceptanceCache;
+    private final ProjectionStatusClient projectionClient;
 
     NotificationStatusLookupService(
             NotificationApiServiceApplication.NotificationRepository repository,
-            AcceptanceCache acceptanceCache) {
+            AcceptanceCache acceptanceCache,
+            ProjectionStatusClient projectionClient) {
         this.repository = repository;
         this.acceptanceCache = acceptanceCache;
+        this.projectionClient = projectionClient;
     }
 
     NotificationApiServiceApplication.NotificationStatus find(UUID notificationId) {
+        Optional<ProjectionStatus> permanent = projectionClient.find(notificationId);
+        if (permanent.isPresent()) {
+            ProjectionStatus status = permanent.get();
+            return new NotificationApiServiceApplication.NotificationStatus(
+                    notificationId, status.status(), null, status.updatedAt());
+        }
         Optional<NotificationApiServiceApplication.NotificationRecord> projection = repository.findOptionalById(notificationId);
         if (projection.isPresent()) {
             NotificationApiServiceApplication.NotificationRecord record = projection.get();
@@ -464,6 +476,62 @@ class NotificationStatusLookupService {
                         HttpStatus.NOT_FOUND, "Notification not found: " + notificationId));
     }
 }
+
+@Service
+class ProjectionStatusClient {
+    private final RestClient client;
+    ProjectionStatusClient(RestClient.Builder builder,
+            @org.springframework.beans.factory.annotation.Value("${NOTIFICATION_PROJECTION_URL:http://localhost:8092}") String url) {
+        this.client = builder.clone().baseUrl(url).build();
+    }
+    Optional<ProjectionStatus> find(UUID notificationId) {
+        try {
+            return Optional.ofNullable(client.get().uri("/projections/notifications/{id}/status", notificationId)
+                    .retrieve().body(ProjectionStatus.class));
+        } catch (RestClientResponseException exception) {
+            if (exception.getStatusCode().value() == 404) return Optional.empty();
+            return Optional.empty();
+        } catch (RuntimeException exception) {
+            return Optional.empty();
+        }
+    }
+
+    Object notification(UUID notificationId) {
+        return get("/projections/notifications/{id}", notificationId);
+    }
+
+    Object stats() {
+        return get("/projections/notifications/stats");
+    }
+
+    Object notifications(String productId,String status,String channel,int page,int size,boolean itemsOnly) {
+        try {
+            Object response=client.get().uri(uri->uri.path("/projections/notifications")
+                    .queryParam("page",page).queryParam("size",size)
+                    .queryParamIfPresent("productId",Optional.ofNullable(productId))
+                    .queryParamIfPresent("status",Optional.ofNullable(status))
+                    .queryParamIfPresent("channel",Optional.ofNullable(channel)).build())
+                    .retrieve().body(Object.class);
+            if(itemsOnly&&response instanceof Map<?,?> result)return result.get("items");
+            return response;
+        } catch(RuntimeException exception){return null;}
+    }
+
+    Object deliveries(UUID notificationId,String status,String channel,int page,int size) {
+        try{return client.get().uri(uri->uri.path("/projections/deliveries")
+                .queryParam("page",page).queryParam("size",size)
+                .queryParamIfPresent("notificationId",Optional.ofNullable(notificationId).map(UUID::toString))
+                .queryParamIfPresent("status",Optional.ofNullable(status))
+                .queryParamIfPresent("channel",Optional.ofNullable(channel)).build())
+                .retrieve().body(Object.class);}catch(RuntimeException exception){return null;}
+    }
+
+    private Object get(String path,Object... variables) {
+        try{return client.get().uri(path,variables).retrieve().body(Object.class);}catch(RuntimeException exception){return null;}
+    }
+}
+
+record ProjectionStatus(String notificationId, String status, Instant updatedAt) {}
 
 @Component("kafkaHealthIndicator")
 class KafkaIntakeHealthIndicator implements HealthIndicator, AutoCloseable {

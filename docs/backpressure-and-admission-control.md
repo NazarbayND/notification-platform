@@ -25,7 +25,7 @@ All values have environment-variable equivalents prefixed with `NOTIFICATION_INT
 - Oversized requests return `413`.
 - The producer uses a 32 MiB bounded buffer and finite `max.block.ms`, delivery timeout, and API wait deadline. There is no application queue in front of Kafka.
 
-The current HTTP contract contains one recipient and one channel, so recipient/channel fan-out limits are explicit but trivially satisfied. Phase 4 will enforce them against the new batch shape before child events are generated.
+The current HTTP contract contains one recipient and one channel, so recipient/channel fan-out limits are explicit but trivially satisfied. The orchestrator still applies preference and address validation before generating child delivery events.
 
 Metrics use bounded labels. Per-tenant accepted traffic is exported in 32 stable hash buckets (`tenant_bucket=00..31`) rather than raw tenant IDs, preventing unbounded Prometheus series. Exact per-tenant rate state remains in Redis.
 

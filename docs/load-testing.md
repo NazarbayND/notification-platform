@@ -21,4 +21,4 @@ Run on 2026-07-10 against the local single-broker KRaft stack:
 
 The overload run intentionally treats `429` as a controlled outcome. k6's built-in `http_req_failed` metric still counts non-2xx responses, while the scenario-specific check confirmed every response was one of `202`, `429`, or `503` and `intake_unexpected_status` remained zero.
 
-Burst and end-to-end wrappers are present. Full orchestrator/worker/projection throughput measurements are deferred until those services exist. Overload success means prompt explicit 429/503 responses, bounded memory/concurrency, retained Kafka data, and backlog recovery—not zero rejection.
+Burst and end-to-end wrappers are present. Full orchestrator/worker/projection throughput measurements have not been run for the Phase 4–8 implementation and are intentionally deferred. Overload success means prompt explicit 429/503 responses, bounded memory/concurrency, retained Kafka data, and backlog recovery—not zero rejection.

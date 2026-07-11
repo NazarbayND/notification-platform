@@ -18,6 +18,14 @@ scrape_configs:
     metrics_path: /actuator/prometheus
     static_configs:
       - targets: ["preference-service:8083"]
+  - job_name: notification-orchestrator-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["notification-orchestrator-service:8091"]
+  - job_name: notification-projection-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["notification-projection-service:8092"]
   - job_name: outbox-publisher-service
     metrics_path: /actuator/prometheus
     static_configs:
