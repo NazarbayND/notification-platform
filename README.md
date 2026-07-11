@@ -13,7 +13,7 @@ The root project is a Maven workspace aggregator. Production behavior lives in `
 | `template-service` | 8082 | Template CRUD, rendering, variable validation |
 | `preference-service` | 8083 | User/product/channel preferences |
 | `notification-orchestrator-service` | 8091 | Durable request orchestration, local reference projections, delivery/status outbox |
-| `notification-projection-service` | 8092 | Rebuildable notification and delivery query model |
+| `notification-projection-service` | 8092 | Rebuildable PostgreSQL query model with an optional DynamoDB repository |
 | `outbox-publisher-service` | 8084 | Outbox polling, locking, RabbitMQ publishing, retry state |
 | `email-worker-service` | 8085 | Email delivery attempts, SMTP/test email providers |
 | `sms-worker-service` | 8086 | SMS delivery attempts and local SMS test inbox |
@@ -126,8 +126,12 @@ Admin BFF:
 - [Kafka-first migration plan](docs/kafka-first-migration-plan.md)
 - [Kafka-first architecture](docs/kafka-first-architecture.md)
 - [Migration baseline](docs/kafka-migration-baseline.md)
+- [Migration implementation status](docs/migration-implementation-status.md)
 - [Backpressure and admission control](docs/backpressure-and-admission-control.md)
 - [Event contracts](docs/event-contracts.md)
+- [Storage strategy and optional DynamoDB](docs/storage-strategy.md)
+- [Load and resilience testing](docs/load-testing.md)
+- [Kubernetes configuration](docs/kubernetes-configuration.md)
 - [Local Kafka runbook](docs/local-run-kafka.md)
 - [RabbitMQ migration and rollback](docs/rabbitmq-to-kafka-migration.md)
 - [Service workspace](services/README.md)

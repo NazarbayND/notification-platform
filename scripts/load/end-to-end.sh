@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "End-to-end Kafka delivery requires the Phase 4 orchestrator and Phase 6 worker migration."
-echo "Running the currently available intake-to-RabbitMQ compatibility load scenario instead."
-BASE_URL="${BASE_URL:-http://localhost:8081}" RATE="${RATE:-50}" DURATION="${DURATION:-30s}" \
-  ./scripts/load/intake.sh
+mkdir -p build/load-results
+BASE_URL="${BASE_URL:-http://localhost:8081}" \
+PROJECTION_URL="${PROJECTION_URL:-http://localhost:8092}" \
+RATE="${RATE:-50}" \
+DURATION="${DURATION:-30s}" \
+k6 run --summary-trend-stats="avg,min,med,p(90),p(95),p(99),max" \
+  --summary-export=build/load-results/end-to-end-summary.json tests/load/end-to-end-test.js

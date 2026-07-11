@@ -34,6 +34,20 @@ Use `NOTIFICATION_BROKER_INTAKE=legacy` and `NOTIFICATION_BROKER_DELIVERY=rabbit
 
 Local partitions default to 6 for intake/channel/results/status/retry topics and 3 for reference events and DLQs. Production counts must be selected from measured throughput, key skew, retention, replication, and recovery requirements; replication factor should normally be at least 3 with an appropriate minimum ISR.
 
+## Optional DynamoDB projection
+
+PostgreSQL is the default. To prepare LocalStack and select DynamoDB:
+
+```bash
+docker compose --profile dynamodb up -d localstack
+PROJECTION_SPRING_PROFILES_ACTIVE=dynamodb NOTIFICATION_PROJECTION_STORE=dynamodb \
+  docker compose --profile dynamodb up -d notification-projection-service
+```
+
+LocalStack runs `scripts/dynamodb/create-tables.sh` as a ready hook. The same script can be run from the host when the AWS CLI is installed.
+
+The gated repository contract test is available through `./scripts/test/dynamodb-contract.sh`. It was not run during implementation.
+
 ## Verified local result
 
 The following were verified on 2026-07-10:
@@ -46,4 +60,4 @@ The following were verified on 2026-07-10:
 - API readiness reported PostgreSQL, Redis, and Kafka `UP`.
 - A smoke request returned `202`, appeared in `notification.requests.v1` under the expected `tenantId:recipientId` key, and was visible as `ACCEPTED` through the Redis fallback status lookup.
 
-These results cover the Phase 3 baseline only. The Phase 4–8 implementation has intentionally not been built, run, or tested yet; validation is deferred until the implementation pass is finished.
+These results cover the Phase 3 baseline only. The Phase 4–10 implementation has intentionally not been built, run, or tested yet; validation is deferred.

@@ -10,10 +10,30 @@ spring:
       auto-offset-reset: earliest
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      max-poll-records: ${PROJECTION_MAX_POLL_RECORDS:500}
     listener:
       ack-mode: record
+      concurrency: ${PROJECTION_KAFKA_CONCURRENCY:3}
 management:
+  endpoint:
+    health:
+      group:
+        readiness:
+          include: readinessState,db
   endpoints:
     web:
       exposure:
         include: health,prometheus,metrics
+notification:
+  projection:
+    store: ${NOTIFICATION_PROJECTION_STORE:postgres}
+    retention-days: ${NOTIFICATION_PROJECTION_RETENTION_DAYS:90}
+    dynamodb:
+      region: ${AWS_REGION:us-east-1}
+      endpoint: ${DYNAMODB_ENDPOINT:}
+      access-key: ${AWS_ACCESS_KEY_ID:}
+      secret-key: ${AWS_SECRET_ACCESS_KEY:}
+      notifications-table: ${DYNAMODB_NOTIFICATIONS_TABLE:notification-projections}
+      deliveries-table: ${DYNAMODB_DELIVERIES_TABLE:notification-deliveries}
+      attempts-table: ${DYNAMODB_ATTEMPTS_TABLE:notification-delivery-attempts}
+      processed-events-table: ${DYNAMODB_PROCESSED_EVENTS_TABLE:notification-processed-events}

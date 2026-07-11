@@ -1,6 +1,6 @@
 # Notification Platform Load Tests
 
-Simple k6 load tests for `POST /notifications`.
+Kafka-first k6 scenarios for intake, end-to-end delivery, burst, and stress behavior.
 
 For the Kafka-first intake test and a machine-readable summary, prefer:
 
@@ -8,52 +8,40 @@ For the Kafka-first intake test and a machine-readable summary, prefer:
 RATE=100 DURATION=30s ./scripts/load/intake.sh
 ```
 
-The default direct-script base URL below predates the Kafka migration and uses port 8080. Set `BASE_URL=http://localhost:8081` when calling those scripts directly.
-
-## Normal Load
+## Scenarios
 
 ```sh
-RATE=100 DURATION=5m k6 run tests/load/load-test.js
+RATE=100 DURATION=5m ./scripts/load/intake.sh
+RATE=50 DURATION=5m ./scripts/load/end-to-end.sh
+BURST_RATE=1000 ./scripts/load/burst.sh
+MAX_VUS=2000 ./scripts/load/stress.sh
 ```
 
-## Approximate 100k Total Requests
+The end-to-end scenario polls `notification-projection-service` until delivery reaches a terminal state and records `e2e_delivery_duration`. All wrappers export machine-readable summaries under `build/load-results/`.
+
+## Backlog and platform summaries
 
 ```sh
-RATE=500 DURATION=200s k6 run tests/load/load-test.js
+GROUP=notification-orchestrator-v1 ./scripts/load/wait-for-backlog.sh
+./scripts/load/collect-platform-summary.sh
 ```
 
-## Throughput Test
+## Configuration
+
+Use `thresholds.env.example` as the explicit acceptance-threshold template. Important variables include `BASE_URL`, `PROJECTION_URL`, `RATE`, `DURATION`, `MAX_VUS`, `CHANNEL`, `TEMPLATE_KEY`, `E2E_P95_MS`, `MAX_STATUS_TIMEOUTS`, and `STATUS_TIMEOUT_SECONDS`.
+
+## Kubernetes
 
 ```sh
-k6 run tests/load/throughput-test.js
+BASE_URL=http://localhost:8081 PROJECTION_URL=http://localhost:8092 ./scripts/load/end-to-end.sh
 ```
-
-## Kubernetes Port-Forward
-
-```sh
-BASE_URL=http://localhost:8080 k6 run tests/load/load-test.js
-```
-
-## Environment Variables
-
-`load-test.js` supports:
-
-- `BASE_URL`, default `http://localhost:8080`
-- `RATE`, default `100`
-- `DURATION`, default `5m`
-- `CHANNEL`, default `EMAIL`
-- `TEMPLATE_KEY`, default `welcome`
-
-`throughput-test.js` supports:
-
-- `BASE_URL`, default `http://localhost:8080`
-- `CHANNEL`, default `EMAIL`
-- `TEMPLATE_KEY`, default `welcome`
-- `MAX_VUS`, default `2000`
 
 ## How To Interpret Results
 
-- If API latency grows, `notification-api-service` or the database may be the bottleneck.
-- If API latency is fine but outbox pending grows, `outbox-publisher-service` is the bottleneck.
-- If broker queues grow, worker services are the bottleneck.
+- If API latency grows, inspect admission control and Kafka producer latency.
+- If API latency is stable but request lag grows, inspect the orchestrator and its outbox.
+- If channel lag grows, inspect provider quotas, worker concurrency, and retries.
+- If result lag grows, inspect the active projection store and connection/capacity limits.
 - If provider errors grow, the provider or test provider is the bottleneck.
+
+No Phase 4–10 scenario has been run yet. Do not infer capacity from the configured rates or thresholds.

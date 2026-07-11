@@ -1,10 +1,15 @@
 import http from "k6/http";
 import { check } from "k6";
+import { Counter } from "k6/metrics";
 
-const BASE_URL = (__ENV.BASE_URL || "http://localhost:8080").replace(/\/$/, "");
+const BASE_URL = (__ENV.BASE_URL || "http://localhost:8081").replace(/\/$/, "");
 const CHANNEL = __ENV.CHANNEL || "EMAIL";
 const TEMPLATE_KEY = __ENV.TEMPLATE_KEY || "welcome";
 const MAX_VUS = Number.parseInt(__ENV.MAX_VUS || "2000", 10);
+const accepted = new Counter("stress_accepted");
+const rejected429 = new Counter("stress_rejected_429");
+const rejected503 = new Counter("stress_rejected_503");
+const unexpected = new Counter("stress_unexpected_status");
 
 export const options = {
   scenarios: {
@@ -25,8 +30,8 @@ export const options = {
     },
   },
   thresholds: {
-    http_req_failed: ["rate<0.01"],
     http_req_duration: ["p(95)<1000", "p(99)<2000"],
+    stress_unexpected_status: ["count==0"],
   },
 };
 
@@ -39,12 +44,8 @@ export default function () {
   const recipient = `user-${unique}@example.com`;
   const idempotencyKey = `throughput-${unique}`;
   const payload = {
-    recipient,
     channel: CHANNEL,
     templateKey: TEMPLATE_KEY,
-    payload: {
-      name: "Load Test User",
-    },
     userId: `user-${unique}`,
     productId: "default",
     variables: {
@@ -62,7 +63,9 @@ export default function () {
     },
   });
 
-  check(response, {
-    "created or accepted": (res) => res.status >= 200 && res.status < 300,
-  });
+  if (response.status === 202) accepted.add(1);
+  else if (response.status === 429) rejected429.add(1);
+  else if (response.status === 503) rejected503.add(1);
+  else unexpected.add(1);
+  check(response, { "controlled stress response": (res) => [202, 429, 503].includes(res.status) });
 }

@@ -1,0 +1,17 @@
+spring:
+  config:
+    activate:
+      on-profile: dynamodb
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      - org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration
+notification:
+  projection:
+    store: dynamodb
+management:
+  endpoint:
+    health:
+      group:
+        readiness:
+          include: readinessState,dynamoDbProjection

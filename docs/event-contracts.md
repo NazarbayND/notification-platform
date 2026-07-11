@@ -26,4 +26,4 @@ Compatibility rules:
 
 ## Test result
 
-`EventContractSerializationTest` passed all 3 tests on 2026-07-10 for the Phase 3 contract. It now also asserts `productId`; the Phase 4–8 contract changes have not been run yet, by design for this implementation pass.
+`EventContractSerializationTest` passed all 3 tests on 2026-07-10 for the Phase 3 contract. It now also asserts `productId`; the Phase 4–10 changes have not been run yet.

@@ -7,10 +7,13 @@ spring:
     bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     producer:
       acks: all
+      compression-type: lz4
+      batch-size: ${KAFKA_PRODUCER_BATCH_SIZE:65536}
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
       properties:
         enable.idempotence: true
+        linger.ms: ${KAFKA_PRODUCER_LINGER_MS:5}
         spring.json.add.type.headers: false
 management:
   endpoints:

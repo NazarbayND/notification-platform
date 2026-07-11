@@ -1,7 +1,9 @@
 import http from "k6/http";
 import { check } from "k6";
+import { Counter } from "k6/metrics";
 
 const BASE_URL = (__ENV.BASE_URL || "http://localhost:8081").replace(/\/$/, "");
+const unexpected = new Counter("burst_unexpected_status");
 
 export const options = {
   scenarios: {
@@ -18,7 +20,7 @@ export const options = {
       ],
     },
   },
-  thresholds: { http_req_duration: ["p(99)<3000"] },
+  thresholds: { http_req_duration: ["p(99)<3000"], burst_unexpected_status: ["count==0"] },
 };
 
 export default function () {
@@ -28,5 +30,6 @@ export default function () {
     channel: "EMAIL", templateKey: "welcome", variables: { name: "Burst" },
     idempotencyKey: `burst-${unique}`, destination: `user-${unique}@example.com`,
   }), { headers: { "Content-Type": "application/json" } });
+  if (![202, 429, 503].includes(response.status)) unexpected.add(1);
   check(response, { "explicit outcome": (result) => [202, 429, 503].includes(result.status) });
 }

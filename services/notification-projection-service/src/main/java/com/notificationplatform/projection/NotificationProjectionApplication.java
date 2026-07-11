@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.Optional;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -69,6 +70,7 @@ interface NotificationProjectionRepository {
     void appendDeliveryAttempt(DeliveryResult event);
     Optional<NotificationView> findById(String notificationId);
     PageView<NotificationView> findAll(String tenantId,String productId,String status,String channel,int page,int size);
+    PageView<NotificationView> findByUser(String tenantId,String userId,int page,int size);
     List<DeliveryView> findDeliveries(String notificationId);
     List<DeliveryView> findDeliveries(String notificationId,String status,String channel,int page,int size);
     Map<String,Object> stats();
@@ -76,6 +78,7 @@ interface NotificationProjectionRepository {
 }
 
 @Repository
+@ConditionalOnProperty(name="notification.projection.store",havingValue="postgres",matchIfMissing=true)
 class PostgresNotificationProjectionRepository implements NotificationProjectionRepository {
     private final JdbcTemplate jdbc;
     private final ObjectMapper mapper;
@@ -137,6 +140,14 @@ class PostgresNotificationProjectionRepository implements NotificationProjection
                 this::mapNotification,tenant,tenant,product,product,status,status,channelJson,channelJson,limit,offset);
         return new PageView<>(items,total==null?0:total,page,limit);
     }
+    @Override public PageView<NotificationView> findByUser(String tenant,String user,int page,int size){
+        int limit=Math.max(1,Math.min(size,200));int offset=Math.max(0,page)*limit;
+        String where=" WHERE (? IS NULL OR tenant_id=?) AND user_id=?";
+        Long total=jdbc.queryForObject("SELECT count(*) FROM notifications"+where,Long.class,tenant,tenant,user);
+        List<NotificationView> items=jdbc.query("SELECT * FROM notifications"+where+" ORDER BY requested_at DESC NULLS LAST LIMIT ? OFFSET ?",
+                this::mapNotification,tenant,tenant,user,limit,offset);
+        return new PageView<>(items,total==null?0:total,page,limit);
+    }
     @Override public List<DeliveryView> findDeliveries(String id){
         return jdbc.query("SELECT * FROM deliveries WHERE notification_id=? ORDER BY updated_at DESC",this::mapDelivery,id);
     }
@@ -196,10 +207,12 @@ class ProjectionController {
             .orElseThrow(()->new ResponseStatusException(HttpStatus.NOT_FOUND,"Notification not found: "+id));}
     @GetMapping("/{id}/status") NotificationStatusView status(@PathVariable String id){NotificationView n=get(id);
         return new NotificationStatusView(n.notificationId(),n.status(),n.updatedAt());}
-    @GetMapping NotificationPage list(@RequestParam(required=false) String tenantId,@RequestParam(required=false) String productId,
+    @GetMapping NotificationPage list(@RequestParam(required=false) String tenantId,@RequestParam(required=false) String userId,
+            @RequestParam(required=false) String productId,
             @RequestParam(required=false) String status,@RequestParam(required=false) String channel,
             @RequestParam(defaultValue="0")int page,@RequestParam(defaultValue="50")int size){
-        PageView<NotificationView> result=repository.findAll(tenantId,productId,status,channel,page,size);
+        PageView<NotificationView> result=userId==null?repository.findAll(tenantId,productId,status,channel,page,size)
+                :repository.findByUser(tenantId,userId,page,size);
         return new NotificationPage(result.items(),result.total(),result.page(),result.size());}
     @GetMapping("/{id}/deliveries") List<DeliveryView> deliveries(@PathVariable String id){return repository.findDeliveries(id);}
     @PostMapping("/rebuild/clear") Map<String,Object> clear(){repository.clearForRebuild();return Map.of("status","CLEARED","at",Instant.now());}

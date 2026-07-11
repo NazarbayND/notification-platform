@@ -10,14 +10,19 @@ spring:
       auto-offset-reset: earliest
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      max-poll-records: ${ORCHESTRATOR_MAX_POLL_RECORDS:100}
     listener:
       ack-mode: record
+      concurrency: ${ORCHESTRATOR_KAFKA_CONCURRENCY:3}
     producer:
       acks: all
+      compression-type: lz4
+      batch-size: ${KAFKA_PRODUCER_BATCH_SIZE:65536}
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
       properties:
         enable.idempotence: true
+        linger.ms: ${KAFKA_PRODUCER_LINGER_MS:5}
         spring.json.add.type.headers: false
 notification:
   broker:

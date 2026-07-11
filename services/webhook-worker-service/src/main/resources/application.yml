@@ -17,6 +17,7 @@ spring:
         enable.idempotence: true
     listener:
       ack-mode: manual_immediate
+      concurrency: ${WORKER_KAFKA_CONCURRENCY:3}
 worker:
   provider:
     max-concurrency: ${WORKER_PROVIDER_MAX_CONCURRENCY:32}

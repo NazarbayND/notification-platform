@@ -1244,6 +1244,8 @@ After parity tests:
 
 Phase 9: Load testing and tuning
 
+Implementation note (2026-07-11): scenario scripts, machine-readable summaries, backlog-drain timing, configurable thresholds, and tuning properties are present. They have not been executed for the final architecture.
+
 Run:
 
 - baseline comparison
@@ -1267,6 +1269,8 @@ Tune:
 - rate limits
 
 Phase 10: Optional DynamoDB projection
+
+Implementation note (2026-07-11): the optional repository, LocalStack provisioning, gated contract test, and Kubernetes overlay are present. PostgreSQL remains the default, and no comparison has been run.
 
 Only after the Kafka/PostgreSQL architecture is stable:
 

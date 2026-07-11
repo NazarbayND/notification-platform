@@ -37,12 +37,19 @@ groups:
         annotations:
           summary: Provider error rate is above 5%
       - alert: DeadLetterEventsDetected
-        expr: outbox_dead_letter_total > 0
+        expr: (sum(outbox_dead_letter_total) or vector(0)) + (sum(worker_dlq_total) or vector(0)) > 0
         for: 1m
         labels:
           severity: critical
         annotations:
-          summary: Dead-lettered outbox events detected
+          summary: Dead-lettered outbox or Kafka worker events detected
+      - alert: OrchestratorOutboxPublishFailures
+        expr: increase(orchestrator_outbox_failures_total[5m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Orchestrator could not publish one or more outbox records
       - alert: AdminBffDownstreamErrors
         expr: increase(admin_bff_downstream_error_total[5m]) > 5
         for: 5m

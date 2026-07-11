@@ -1,7 +1,7 @@
 import http from "k6/http";
 import { check } from "k6";
 
-const BASE_URL = (__ENV.BASE_URL || "http://localhost:8080").replace(/\/$/, "");
+const BASE_URL = (__ENV.BASE_URL || "http://localhost:8081").replace(/\/$/, "");
 const RATE = Number.parseInt(__ENV.RATE || "100", 10);
 const DURATION = __ENV.DURATION || "5m";
 const CHANNEL = __ENV.CHANNEL || "EMAIL";
@@ -33,12 +33,8 @@ export default function () {
   const recipient = `user-${unique}@example.com`;
   const idempotencyKey = `load-${unique}`;
   const payload = {
-    recipient,
     channel: CHANNEL,
     templateKey: TEMPLATE_KEY,
-    payload: {
-      name: "Load Test User",
-    },
     userId: `user-${unique}`,
     productId: "default",
     variables: {

@@ -58,6 +58,23 @@ services:
       timeout: 5s
       retries: 5
 
+  localstack:
+    image: localstack/localstack:3.8
+    profiles: ["dynamodb"]
+    environment:
+      SERVICES: dynamodb
+      AWS_DEFAULT_REGION: us-east-1
+    ports:
+      - "4566:4566"
+    volumes:
+      - ./scripts/dynamodb:/etc/localstack/init/ready.d:ro
+      - localstack-data:/var/lib/localstack
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   kafka:
     image: apache/kafka:3.9.1
     container_name: notification-platform-kafka
@@ -260,6 +277,12 @@ services:
       SPRING_DATASOURCE_PASSWORD: notification
       SPRING_FLYWAY_SCHEMAS: notification_projection
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SPRING_PROFILES_ACTIVE: ${PROJECTION_SPRING_PROFILES_ACTIVE:-postgres}
+      NOTIFICATION_PROJECTION_STORE: ${NOTIFICATION_PROJECTION_STORE:-postgres}
+      DYNAMODB_ENDPOINT: ${DYNAMODB_ENDPOINT:-http://localstack:4566}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-local}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-local}
       MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health,prometheus
       MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
     ports:
@@ -316,7 +339,9 @@ services:
       SPRING_RABBITMQ_HOST: rabbitmq
       SPRING_RABBITMQ_USERNAME: notification
       SPRING_RABBITMQ_PASSWORD: notification
-      EMAIL_PROVIDER: smtp
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-smtp}
+      TEST_PROVIDER_FAILURE_RATE: ${TEST_PROVIDER_FAILURE_RATE:-0.0}
+      TEST_PROVIDER_LATENCY_MS: ${TEST_PROVIDER_LATENCY_MS:-0}
       SPRING_MAIL_HOST: mailhog
       SPRING_MAIL_PORT: 1025
       MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health,prometheus
@@ -351,7 +376,7 @@ services:
       SPRING_RABBITMQ_PASSWORD: notification
       SMS_PROVIDER: test
       TEST_PROVIDER_FAILURE_RATE: 0.0
-      TEST_PROVIDER_LATENCY_MS: 0
+      TEST_PROVIDER_LATENCY_MS: ${TEST_PROVIDER_LATENCY_MS:-0}
       MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health,prometheus
       MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
     ports:
@@ -382,7 +407,7 @@ services:
       SPRING_RABBITMQ_PASSWORD: notification
       PUSH_PROVIDER: test
       TEST_PROVIDER_FAILURE_RATE: 0.0
-      TEST_PROVIDER_LATENCY_MS: 0
+      TEST_PROVIDER_LATENCY_MS: ${TEST_PROVIDER_LATENCY_MS:-0}
       MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health,prometheus
       MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
     ports:
@@ -413,7 +438,7 @@ services:
       SPRING_RABBITMQ_PASSWORD: notification
       IN_APP_PROVIDER: db
       TEST_PROVIDER_FAILURE_RATE: 0.0
-      TEST_PROVIDER_LATENCY_MS: 0
+      TEST_PROVIDER_LATENCY_MS: ${TEST_PROVIDER_LATENCY_MS:-0}
       MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health,prometheus
       MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
     ports:
@@ -444,7 +469,7 @@ services:
       SPRING_RABBITMQ_PASSWORD: notification
       WEBHOOK_PROVIDER: test
       TEST_PROVIDER_FAILURE_RATE: 0.0
-      TEST_PROVIDER_LATENCY_MS: 0
+      TEST_PROVIDER_LATENCY_MS: ${TEST_PROVIDER_LATENCY_MS:-0}
       MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health,prometheus
       MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
     ports:
@@ -592,3 +617,4 @@ volumes:
   microservices-kafka-data:
   grafana-data:
   loki-data:
+  localstack-data:
