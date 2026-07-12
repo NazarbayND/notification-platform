@@ -12,7 +12,10 @@ mkdir -p "$(dirname "${OUTPUT}")"
 lag() {
   docker compose exec -T kafka /opt/kafka/bin/kafka-consumer-groups.sh \
     --bootstrap-server "${BOOTSTRAP_SERVERS}" --group "${GROUP}" --describe 2>/dev/null \
-    | awk 'NR>2 && $6 ~ /^[0-9]+$/ {sum+=$6} END {print sum+0}'
+    | awk 'NR>2 {
+        if ($6 ~ /^[0-9]+$/) sum += $6;
+        else if ($4 == "-" && $5 ~ /^[0-9]+$/) sum += $5;
+      } END {print sum+0}'
 }
 
 while true; do

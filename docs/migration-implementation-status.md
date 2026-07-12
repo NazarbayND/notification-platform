@@ -7,22 +7,19 @@ All ten migration phases are implemented in source and configuration as of 2026-
 | 1. Analysis and baseline | Complete | Historical baseline retained |
 | 2. Kafka infrastructure/contracts | Complete | Previously validated in Phase 3 |
 | 3. Kafka-first intake | Complete | Previously validated in Phase 3 |
-| 4. Orchestrator | Complete | Not run after implementation |
-| 5. Reference projections | Complete | Not run after implementation |
-| 6. Kafka workers/retry/DLQ | Complete | Not run after implementation |
-| 7. Notification projection | Complete | Not run after implementation |
-| 8. Kafka delivery default | Complete | Not run after implementation |
-| 9. Load/resilience/tuning | Scripts, thresholds, metrics, and tunable configuration complete | Scenarios not run |
-| 10. Optional DynamoDB projection | Repository, LocalStack, contract test, and Kubernetes overlay complete | Not run or compared with PostgreSQL |
+| 4. Orchestrator | Complete | End-to-end Kafka flow passed |
+| 5. Reference projections | Complete | Template projection exercised by end-to-end run |
+| 6. Kafka workers/retry/DLQ | Complete | PUSH worker passed sustained run; limiter regression test added |
+| 7. Notification projection | Complete | 1,501 terminal deliveries verified through PostgreSQL projection API |
+| 8. Kafka delivery default | Complete | Kafka intake and delivery defaults verified in Compose |
+| 9. Load/resilience/tuning | Scripts, thresholds, metrics, and tunable configuration complete | 100 RPS intake and 50 RPS end-to-end passed; new burst rerun deferred |
+| 10. Optional DynamoDB projection | Evaluated and not adopted; PostgreSQL selected | No DynamoDB validation required |
 
-No build, unit test, integration test, container, failure scenario, load test, contract test, or benchmark was executed while completing Phases 4–10. The Phase 3 results in the runbooks are historical and must not be treated as validation of the final architecture.
+The initial implementation pass did not execute validation. The PostgreSQL validation pass on 2026-07-12 built and started the complete stack, verified every application health endpoint, passed the integration check, and captured the results in `docs/load-testing.md` and `docs/local-run-kafka.md`.
 
-## Deferred validation order
+## Remaining validation
 
-1. Compile and run unit tests.
-2. Run the PostgreSQL projection stack and integration suite.
-3. Run steady, end-to-end, burst, and stress scenarios.
-4. Measure backlog drain and execute each gated failure scenario.
-5. Run the DynamoDB contract test against LocalStack.
-6. Run equivalent PostgreSQL and DynamoDB projection workloads with identical events and hardware.
-7. Keep PostgreSQL as the production choice unless the comparison demonstrates a concrete DynamoDB advantage.
+1. Rerun the 1,000 RPS burst profile and run the longer stress profile when execution approval is available.
+2. Execute each gated infrastructure/provider failure scenario.
+3. Capture CPU, memory, GC, database write-rate, and connection-pool time series during a longer run.
+4. Keep PostgreSQL as the production choice unless future workload evidence justifies reevaluating another store.

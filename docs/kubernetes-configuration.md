@@ -17,7 +17,6 @@ This project uses plain Kubernetes manifests for local learning and testing.
 - `k8s/base/microservices.yaml` deploys the application platform.
 - `k8s/base/kafka-migration-services.yaml` deploys the orchestrator and projection service.
 - `k8s/base/keda-kafka-scalers.yaml` defines Kafka-lag scaling and requires KEDA CRDs.
-- `k8s/overlays/dynamodb` selects the optional DynamoDB projection repository.
 - `k8s/observability/observability.yaml` deploys Prometheus, Grafana, Loki, Jaeger, Promtail, and the OpenTelemetry Collector.
 
 ## Namespace
@@ -97,7 +96,6 @@ Apply observability:
 kubectl apply -f k8s/observability/observability.yaml
 ```
 
-For DynamoDB, configure the overlay service account with a workload-identity role that grants only the four projection tables, then run `kubectl apply -k k8s/overlays/dynamodb`. Do not add static AWS credentials to the manifests.
 
 Check status:
 

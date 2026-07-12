@@ -38,7 +38,7 @@ flowchart LR
     PROJ --> Q[(PostgreSQL query store)]
 ```
 
-`notification-projection-service` also provides an optional DynamoDB repository behind configuration. It does not dual-write: exactly one projection store is active. PostgreSQL remains the default until equivalent workloads demonstrate that DynamoDB's operational and cost trade-offs are justified.
+PostgreSQL is the sole projection store. DynamoDB was evaluated as an optional phase but was not adopted without comparative evidence.
 
 ## Intake sequence
 

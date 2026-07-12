@@ -12,7 +12,6 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -23,14 +22,15 @@ public final class KafkaWorkerCoordinator {
     private final KafkaTemplate<Object,Object> kafka;
     private final MeterRegistry meters;
     private final Semaphore concurrency;
-    private final long minimumCallIntervalNanos;
-    private final AtomicLong nextProviderCall = new AtomicLong();
+    private final int providerRatePerSecond;
+    private long providerWindowStartedNanos=System.nanoTime();
+    private int providerCallsInWindow;
 
     public KafkaWorkerCoordinator(String channel,KafkaTemplate<Object,Object> kafka,MeterRegistry meters,
             int maxConcurrency,int providerRatePerSecond){
         this.channel=channel;this.kafka=kafka;this.meters=meters;
         this.concurrency=new Semaphore(Math.max(1,maxConcurrency));
-        this.minimumCallIntervalNanos=1_000_000_000L/Math.max(1,providerRatePerSecond);
+        this.providerRatePerSecond=Math.max(1,providerRatePerSecond);
         Gauge.builder("worker_active_tasks",concurrency,semaphore->Math.max(0,maxConcurrency-semaphore.availablePermits()))
                 .tag("channel",channel).register(meters);
     }
@@ -40,8 +40,8 @@ public final class KafkaWorkerCoordinator {
         Duration wait=requiredDelay(record.topic()).minus(Duration.ofMillis(Math.max(0,System.currentTimeMillis()-record.timestamp())));
         if(!wait.isNegative()&&!wait.isZero()){acknowledgment.nack(wait);return;}
         if(!concurrency.tryAcquire()){acknowledgment.nack(Duration.ofMillis(250));return;}
-        long now=System.nanoTime();long allowed=nextProviderCall.getAndUpdate(current->Math.max(current,now)+minimumCallIntervalNanos);
-        if(allowed>now){concurrency.release();acknowledgment.nack(Duration.ofNanos(allowed-now));return;}
+        Duration providerWait=reserveProviderSlot();
+        if(!providerWait.isZero()){concurrency.release();acknowledgment.nack(providerWait);return;}
         try{
             providerCall.run();
             AttemptResult result=resultLookup.get();
@@ -56,6 +56,21 @@ public final class KafkaWorkerCoordinator {
             publishRetry(delivery,record,"WORKER_EXCEPTION",exception.getMessage());
             acknowledgment.acknowledge();
         }finally{concurrency.release();}
+    }
+
+    synchronized Duration reserveProviderSlot(){
+        long now=System.nanoTime();
+        long elapsed=now-providerWindowStartedNanos;
+        if(elapsed>=1_000_000_000L){
+            providerWindowStartedNanos=now;
+            providerCallsInWindow=0;
+            elapsed=0;
+        }
+        if(providerCallsInWindow<providerRatePerSecond){
+            providerCallsInWindow++;
+            return Duration.ZERO;
+        }
+        return Duration.ofNanos(1_000_000_000L-elapsed);
     }
 
     public void malformed(ConsumerRecord<String,String> record,String rawPayload,Exception error,Acknowledgment acknowledgment){

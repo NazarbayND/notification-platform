@@ -34,21 +34,7 @@ Use `NOTIFICATION_BROKER_INTAKE=legacy` and `NOTIFICATION_BROKER_DELIVERY=rabbit
 
 Local partitions default to 6 for intake/channel/results/status/retry topics and 3 for reference events and DLQs. Production counts must be selected from measured throughput, key skew, retention, replication, and recovery requirements; replication factor should normally be at least 3 with an appropriate minimum ISR.
 
-## Optional DynamoDB projection
-
-PostgreSQL is the default. To prepare LocalStack and select DynamoDB:
-
-```bash
-docker compose --profile dynamodb up -d localstack
-PROJECTION_SPRING_PROFILES_ACTIVE=dynamodb NOTIFICATION_PROJECTION_STORE=dynamodb \
-  docker compose --profile dynamodb up -d notification-projection-service
-```
-
-LocalStack runs `scripts/dynamodb/create-tables.sh` as a ready hook. The same script can be run from the host when the AWS CLI is installed.
-
-The gated repository contract test is available through `./scripts/test/dynamodb-contract.sh`. It was not run during implementation.
-
-## Verified local result
+## Verified local results
 
 The following were verified on 2026-07-10:
 
@@ -60,4 +46,14 @@ The following were verified on 2026-07-10:
 - API readiness reported PostgreSQL, Redis, and Kafka `UP`.
 - A smoke request returned `202`, appeared in `notification.requests.v1` under the expected `tenantId:recipientId` key, and was visible as `ACCEPTED` through the Redis fallback status lookup.
 
-These results cover the Phase 3 baseline only. The Phase 4–10 implementation has intentionally not been built, run, or tested yet; validation is deferred.
+The final architecture was subsequently verified on 2026-07-12:
+
+- `mvn -f services/pom.xml clean test`: passed, 23 tests, 0 failures and 0 errors.
+- All 12 Spring application health endpoints returned `200`/`UP`; Grafana also returned `200` after removal of a duplicate default Prometheus datasource.
+- The service reactor packaged successfully and the integration script passed against PostgreSQL, Kafka, Redis, and RabbitMQ.
+- PostgreSQL connection usage stabilized at 27/100 after local Hikari pools were capped at five connections per service.
+- Kafka intake accepted 3,001/3,001 requests at 100 RPS for 30 seconds, with 6.62 ms p95 HTTP latency.
+- PUSH end-to-end delivery completed 1,501/1,501 requests at 50 RPS for 30 seconds, with zero terminal failures/timeouts/dropped iterations and 4.27 s p95 delivery latency.
+- The fixed PUSH consumer drained a previously accumulated 333-message backlog in 7 seconds.
+
+Detailed load results and limitations are in `docs/load-testing.md`.

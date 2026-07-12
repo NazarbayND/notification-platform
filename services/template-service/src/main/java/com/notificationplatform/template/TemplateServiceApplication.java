@@ -88,11 +88,6 @@ public class TemplateServiceApplication {
             return repository.update(updated);
         }
 
-        @DeleteMapping("/{id}")
-        @ResponseStatus(HttpStatus.NO_CONTENT)
-        void delete(@PathVariable UUID id) {
-            repository.delete(id);
-        }
     }
 
     @RestController
@@ -143,6 +138,12 @@ public class TemplateServiceApplication {
                     existing.createdAt(),
                     Instant.now());
             return repository.update(updated);
+        }
+
+        @DeleteMapping("/{id}")
+        @ResponseStatus(HttpStatus.NO_CONTENT)
+        void delete(@PathVariable UUID id) {
+            repository.delete(id);
         }
 
         @PostMapping("/{id}/preview")

@@ -1,5 +1,9 @@
 x-observability-env: &observability-env
   ENVIRONMENT: local
+  # Keep the aggregate pool budget below PostgreSQL's default 100 connections.
+  # This stack runs twelve Spring services against one local database.
+  SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: 5
+  SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 1
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
   OTEL_TRACES_EXPORTER: otlp
   OTEL_METRICS_EXPORTER: none
@@ -57,23 +61,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-
-  localstack:
-    image: localstack/localstack:3.8
-    profiles: ["dynamodb"]
-    environment:
-      SERVICES: dynamodb
-      AWS_DEFAULT_REGION: us-east-1
-    ports:
-      - "4566:4566"
-    volumes:
-      - ./scripts/dynamodb:/etc/localstack/init/ready.d:ro
-      - localstack-data:/var/lib/localstack
-    healthcheck:
-      test: ["CMD", "curl", "--fail", "http://localhost:4566/_localstack/health"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
 
   kafka:
     image: apache/kafka:3.9.1
@@ -277,12 +264,6 @@ services:
       SPRING_DATASOURCE_PASSWORD: notification
       SPRING_FLYWAY_SCHEMAS: notification_projection
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-      SPRING_PROFILES_ACTIVE: ${PROJECTION_SPRING_PROFILES_ACTIVE:-postgres}
-      NOTIFICATION_PROJECTION_STORE: ${NOTIFICATION_PROJECTION_STORE:-postgres}
-      DYNAMODB_ENDPOINT: ${DYNAMODB_ENDPOINT:-http://localstack:4566}
-      AWS_REGION: ${AWS_REGION:-us-east-1}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-local}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-local}
       MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health,prometheus
       MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
     ports:
@@ -617,4 +598,3 @@ volumes:
   microservices-kafka-data:
   grafana-data:
   loki-data:
-  localstack-data:

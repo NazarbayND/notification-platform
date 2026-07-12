@@ -2,12 +2,19 @@ import http from "k6/http";
 import { check, sleep } from "k6";
 import { Counter, Trend } from "k6/metrics";
 
+http.setResponseCallback(http.expectedStatuses(200, 202, 404, 429, 503));
+
 const API_URL = (__ENV.BASE_URL || "http://localhost:8081").replace(/\/$/, "");
 const PROJECTION_URL = (__ENV.PROJECTION_URL || "http://localhost:8092").replace(/\/$/, "");
 const RATE = Number.parseInt(__ENV.RATE || "50", 10);
 const DURATION = __ENV.DURATION || "30s";
 const POLL_INTERVAL_SECONDS = Number.parseFloat(__ENV.POLL_INTERVAL_SECONDS || "0.25");
 const STATUS_TIMEOUT_SECONDS = Number.parseInt(__ENV.STATUS_TIMEOUT_SECONDS || "30", 10);
+const MAX_VUS = Number.parseInt(__ENV.MAX_VUS || String(Math.max(200, RATE * 4)), 10);
+const PRE_ALLOCATED_VUS = Number.parseInt(
+  __ENV.PRE_ALLOCATED_VUS || String(Math.min(MAX_VUS, Math.max(20, RATE * 4))),
+  10,
+);
 
 const delivered = new Counter("e2e_delivered");
 const failed = new Counter("e2e_failed");
@@ -21,12 +28,14 @@ export const options = {
       rate: RATE,
       timeUnit: "1s",
       duration: DURATION,
-      preAllocatedVUs: Math.max(20, RATE),
-      maxVUs: Number.parseInt(__ENV.MAX_VUS || String(Math.max(200, RATE * 4)), 10),
+      preAllocatedVUs: PRE_ALLOCATED_VUS,
+      maxVUs: MAX_VUS,
     },
   },
   thresholds: {
     intake_unexpected_status: ["count==0"],
+    dropped_iterations: ["count==0"],
+    e2e_failed: ["count==0"],
     e2e_status_timeout: [`count<=${__ENV.MAX_STATUS_TIMEOUTS || "0"}`],
     e2e_delivery_duration: [`p(95)<${__ENV.E2E_P95_MS || "10000"}`],
   },

@@ -1270,7 +1270,7 @@ Tune:
 
 Phase 10: Optional DynamoDB projection
 
-Implementation note (2026-07-11): the optional repository, LocalStack provisioning, gated contract test, and Kubernetes overlay are present. PostgreSQL remains the default, and no comparison has been run.
+Implementation decision (2026-07-12): PostgreSQL remains the sole projection store. The optional DynamoDB implementation was not adopted because no workload evidence justifies the additional dependency and operational complexity.
 
 Only after the Kafka/PostgreSQL architecture is stable:
 

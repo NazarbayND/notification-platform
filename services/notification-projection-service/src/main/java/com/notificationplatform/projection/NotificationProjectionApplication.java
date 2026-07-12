@@ -15,7 +15,6 @@ import java.util.Map;
 import java.util.Optional;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -59,8 +58,9 @@ class ProjectionConsumers {
     void result(String json) throws Exception {
         timed("result",()->repository.appendDeliveryAttempt(mapper.readValue(json,DeliveryResult.class)));
     }
-    private void timed(String type,Runnable task){Timer.Sample sample=Timer.start(meters);try{task.run();}
+    private void timed(String type,CheckedTask task) throws Exception {Timer.Sample sample=Timer.start(meters);try{task.run();}
         finally{sample.stop(Timer.builder("projection_update_latency").tag("type",type).register(meters));}}
+    @FunctionalInterface interface CheckedTask {void run() throws Exception;}
 }
 
 interface NotificationProjectionRepository {
@@ -78,7 +78,6 @@ interface NotificationProjectionRepository {
 }
 
 @Repository
-@ConditionalOnProperty(name="notification.projection.store",havingValue="postgres",matchIfMissing=true)
 class PostgresNotificationProjectionRepository implements NotificationProjectionRepository {
     private final JdbcTemplate jdbc;
     private final ObjectMapper mapper;
