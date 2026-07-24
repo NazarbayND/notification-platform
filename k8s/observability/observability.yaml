@@ -34,9 +34,6 @@ data:
             target_label: __address__
           - source_labels: [__meta_kubernetes_pod_label_app]
             target_label: service
-      - job_name: rabbitmq
-        static_configs:
-          - targets: ["rabbitmq.notification-platform:15692"]
       - job_name: otel-collector
         static_configs:
           - targets: ["otel-collector.observability:8888"]
@@ -44,20 +41,6 @@ data:
     groups:
       - name: notification-platform
         rules:
-          - alert: OutboxBacklogGrowing
-            expr: outbox_pending_total > 1000
-            for: 10m
-            labels:
-              severity: warning
-            annotations:
-              summary: Outbox pending backlog is high
-          - alert: OutboxOldestEventTooOld
-            expr: outbox_oldest_pending_age_seconds > 300
-            for: 5m
-            labels:
-              severity: critical
-            annotations:
-              summary: Oldest pending outbox event is older than five minutes
           - alert: WorkerHighFailureRate
             expr: sum(rate(worker_messages_failed_total[5m])) / clamp_min(sum(rate(worker_messages_consumed_total[5m])), 1) > 0.1
             for: 10m
@@ -66,12 +49,19 @@ data:
             annotations:
               summary: Worker failure rate is above ten percent
           - alert: DeadLetterEventsDetected
-            expr: outbox_dead_letter_total > 0
+            expr: sum(worker_dlq_total) > 0
             for: 1m
             labels:
               severity: critical
             annotations:
-              summary: Dead letter events exist in the outbox
+              summary: Kafka worker dead-letter events detected
+          - alert: OrchestratorOutboxPublishFailures
+            expr: increase(orchestrator_outbox_failures_total[5m]) > 0
+            for: 2m
+            labels:
+              severity: warning
+            annotations:
+              summary: Orchestrator could not publish one or more durable outbox records
 ---
 apiVersion: v1
 kind: ConfigMap

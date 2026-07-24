@@ -9,34 +9,34 @@ import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { ErrorBlock, LoadingBlock, StateBlock } from "../components/StateBlock";
 import { formatDateTime } from "../lib/format";
-import type { NotificationPriority, NotificationRequestStatus } from "../types/api";
+import type { Channel, NotificationRequestStatus } from "../types/api";
 
 const notificationStatuses: NotificationRequestStatus[] = [
   "ACCEPTED",
-  "SENT",
-  "PARTIAL_FAILED",
+  "PROCESSING",
+  "SCHEDULED",
+  "DELIVERED",
+  "PARTIALLY_DELIVERED",
   "FAILED",
-  "SKIPPED"
+  "REJECTED"
 ];
-const priorities: NotificationPriority[] = ["LOW", "NORMAL", "HIGH"];
+const channels: Channel[] = ["EMAIL", "SMS", "PUSH", "IN_APP", "WEBHOOK"];
 
 export function NotificationsPage() {
   const navigate = useNavigate();
   const [lookupId, setLookupId] = useState("");
   const [productId, setProductId] = useState("");
   const [status, setStatus] = useState<NotificationRequestStatus | "">("");
-  const [priority, setPriority] = useState<NotificationPriority | "">("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [channel, setChannel] = useState<Channel | "">("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
-  const notificationsQuery = useNotifications({ productId, status, priority, dateFrom, dateTo }, page, pageSize);
+  const notificationsQuery = useNotifications({ productId, status, channel }, page, pageSize);
   const notifications = notificationsQuery.data?.items ?? [];
   const totalNotifications = notificationsQuery.data?.total ?? 0;
 
   useEffect(() => {
     setPage(1);
-  }, [productId, status, priority, dateFrom, dateTo]);
+  }, [productId, status, channel]);
 
   function handleLookup(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -68,7 +68,7 @@ export function NotificationsPage() {
         </Panel>
 
         <Panel title="Filters">
-          <div className="grid gap-3 md:grid-cols-5">
+          <div className="grid gap-3 md:grid-cols-3">
             <TextField label="Product ID" value={productId} onChange={(event) => setProductId(event.target.value)} />
             <SelectField label="Status" value={status} onChange={(event) => setStatus(event.target.value as NotificationRequestStatus | "")}>
               <option value="">All statuses</option>
@@ -78,16 +78,14 @@ export function NotificationsPage() {
                 </option>
               ))}
             </SelectField>
-            <SelectField label="Priority" value={priority} onChange={(event) => setPriority(event.target.value as NotificationPriority | "")}>
-              <option value="">All priorities</option>
-              {priorities.map((item) => (
+            <SelectField label="Channel" value={channel} onChange={(event) => setChannel(event.target.value as Channel | "")}>
+              <option value="">All channels</option>
+              {channels.map((item) => (
                 <option key={item} value={item}>
                   {item}
                 </option>
               ))}
             </SelectField>
-            <TextField label="From" type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
-            <TextField label="To" type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
           </div>
         </Panel>
       </div>
@@ -102,7 +100,7 @@ export function NotificationsPage() {
       ) : null}
       {notificationsQuery.data && totalNotifications > 0 ? (
         <PaginatedDataTable
-          headers={["Template", "User", "Status", "Priority", "Created", "Actions"]}
+          headers={["Template", "User", "Channel", "Status", "Requested", "Actions"]}
           rows={notifications}
           totalRows={totalNotifications}
           page={page}
@@ -115,12 +113,12 @@ export function NotificationsPage() {
           renderRow={(notification) => (
             <tr key={notification.id}>
               <td className="px-4 py-3 font-medium">{notification.templateKey}</td>
-              <td className="px-4 py-3">{notification.externalUserId}</td>
+              <td className="px-4 py-3">{notification.userId}</td>
+              <td className="px-4 py-3">{notification.channel}</td>
               <td className="px-4 py-3">
                 <Badge value={notification.status} tone={notification.status === "FAILED" ? "danger" : "neutral"} />
               </td>
-              <td className="px-4 py-3">{notification.priority}</td>
-              <td className="px-4 py-3 text-slate-600">{formatDateTime(notification.createdAt)}</td>
+              <td className="px-4 py-3 text-slate-600">{formatDateTime(notification.requestedAt)}</td>
               <td className="px-4 py-3">
                 <Link className="text-sm font-semibold text-fern hover:underline" to={`/notifications/${notification.id}`}>
                   Open

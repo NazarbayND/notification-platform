@@ -30,39 +30,24 @@ export function DashboardPage() {
           note="Requests created since UTC midnight."
         />
         <StatCard
-          label="Sent"
-          value={stats?.sentCount}
-          note="Published outbox events or sent notifications."
+          label="Delivered"
+          value={stats?.deliveredCount}
+          note="Fully or partially delivered notifications."
         />
         <StatCard
-          label="Pending outbox"
-          value={stats?.pendingOutboxCount}
-          note="Waiting to be published."
-        />
-        <StatCard
-          label="Failed outbox"
+          label="Failed"
           value={stats?.failedCount}
-          note="Failed or dead-lettered events."
+          note="Notifications whose deliveries failed."
         />
         <StatCard
-          label="Retry scheduled"
-          value={stats?.retryCount}
-          note="Failed events that can still retry."
-        />
-        <StatCard
-          label="Dead-lettered"
-          value={stats?.dlqCount}
-          note="Max attempts exhausted."
+          label="Retry attempts"
+          value={stats?.retryAttemptCount}
+          note="Delivery attempts after the first try."
         />
         <StatCard
           label="Error rate"
           value={formatPercent(stats?.providerErrorRate)}
-          note="Failed and dead-lettered share of processed outbox."
-        />
-        <StatCard
-          label="Throughput / min"
-          value={formatDecimal(stats?.throughputPerMinute)}
-          note="Notifications created today."
+          note="Failed share of completed notifications."
         />
       </div>
     </>
@@ -74,11 +59,4 @@ function formatPercent(value: number | null | undefined) {
     return "--";
   }
   return `${(value * 100).toFixed(1)}%`;
-}
-
-function formatDecimal(value: number | null | undefined) {
-  if (value == null) {
-    return "--";
-  }
-  return value.toFixed(2);
 }

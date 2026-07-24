@@ -13,13 +13,6 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import org.springframework.amqp.core.Binding;
-import org.springframework.amqp.core.BindingBuilder;
-import org.springframework.amqp.core.DirectExchange;
-import org.springframework.amqp.core.Queue;
-import org.springframework.messaging.handler.annotation.Header;
-import org.springframework.amqp.rabbit.annotation.RabbitListener;
-import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -41,35 +34,12 @@ import org.springframework.web.bind.annotation.RestController;
 @SpringBootApplication
 public class InAppWorkerServiceApplication {
 
-    static final String DELIVERY_EXCHANGE = "notification.delivery";
-    static final String IN_APP_QUEUE = "delivery.in-app";
-
     public static void main(String[] args) {
         SpringApplication.run(InAppWorkerServiceApplication.class, args);
     }
 
     private static java.sql.Timestamp ts(Instant instant) {
         return instant == null ? null : java.sql.Timestamp.from(instant);
-    }
-
-    @Bean
-    Jackson2JsonMessageConverter jackson2JsonMessageConverter(com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
-        return new Jackson2JsonMessageConverter(objectMapper);
-    }
-
-    @Bean
-    DirectExchange deliveryExchange() {
-        return new DirectExchange(DELIVERY_EXCHANGE, true, false);
-    }
-
-    @Bean
-    Queue inAppQueue() {
-        return new Queue(IN_APP_QUEUE, true);
-    }
-
-    @Bean
-    Binding inAppBinding(Queue inAppQueue, DirectExchange deliveryExchange) {
-        return BindingBuilder.bind(inAppQueue).to(deliveryExchange).with("IN_APP");
     }
 
     @RestController
@@ -142,20 +112,19 @@ public class InAppWorkerServiceApplication {
     }
 
     @org.springframework.stereotype.Component
-    static class InAppDeliveryConsumer {
+    static class InAppDeliveryProcessor {
         private final DbInAppProvider provider;
         private final MeterRegistry meterRegistry;
 
-        InAppDeliveryConsumer(DbInAppProvider provider, MeterRegistry meterRegistry) {
+        InAppDeliveryProcessor(DbInAppProvider provider, MeterRegistry meterRegistry) {
             this.provider = provider;
             this.meterRegistry = meterRegistry;
         }
 
-        @RabbitListener(queues = IN_APP_QUEUE)
-        void consume(DeliveryJob job, @Header(name = "X-Correlation-Id", required = false) String correlationId) {
+        void process(DeliveryJob job) {
             Timer.Sample processingTimer = Timer.start(meterRegistry);
             meterRegistry.counter("worker_messages_consumed_total", "service", "in-app-worker-service", "channel", "IN_APP").increment();
-            putContext(job, correlationId);
+            putContext(job);
             try {
                 ProviderResult result = provider.createFromJob(job);
                 if (result == null) {
@@ -179,12 +148,7 @@ public class InAppWorkerServiceApplication {
             }
         }
 
-        private void putContext(DeliveryJob job, String correlationId) {
-            if (correlationId != null && !correlationId.isBlank()) {
-                MDC.put("correlationId", correlationId);
-            } else if (job.correlationId() != null && !job.correlationId().isBlank()) {
-                MDC.put("correlationId", job.correlationId());
-            }
+        private void putContext(DeliveryJob job) {
             MDC.put("eventId", String.valueOf(job.eventId()));
             MDC.put("notificationId", String.valueOf(job.notificationId()));
             MDC.put("channel", "IN_APP");
@@ -227,12 +191,9 @@ public class InAppWorkerServiceApplication {
             UUID eventId,
             UUID notificationId,
             UUID deliveryId,
-            String channel,
             String destination,
             String subject,
-            String body,
-            String priority,
-            String correlationId) {
+            String body) {
     }
 
     record ProviderResult(
@@ -291,26 +252,8 @@ public class InAppWorkerServiceApplication {
                         UUID.randomUUID(), job.eventId(), job.notificationId(), job.deliveryId(), job.destination(),
                         result.provider(), result.providerMessageId(), result.status(), "{\"stored\":true}",
                         result.errorCode(), result.errorMessage(), ts(result.sentAt()), ts(now));
-                updateNotificationStatus(job, result, now);
             }
             return result;
-        }
-
-        private void updateNotificationStatus(DeliveryJob job, ProviderResult result, Instant now) {
-            jdbc.update("""
-                    UPDATE notification_api.notification_deliveries
-                    SET status = ?, attempt_count = attempt_count + 1, updated_at = ?
-                    WHERE id = ?
-                    """, result.status(), ts(now), job.deliveryId());
-            jdbc.update("""
-                    UPDATE notification_api.notifications
-                    SET status = ?, updated_at = ?
-                    WHERE id = ?
-                    """, notificationStatus(result.status()), ts(now), job.notificationId());
-        }
-
-        private String notificationStatus(String deliveryStatus) {
-            return "SENT".equals(deliveryStatus) ? "SENT" : "FAILED";
         }
 
         private boolean markProcessing(UUID eventId) {

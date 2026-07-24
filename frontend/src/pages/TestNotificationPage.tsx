@@ -8,9 +8,8 @@ import { JsonPreview } from "../components/JsonPreview";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { LoadingBlock, StateBlock } from "../components/StateBlock";
-import type { NotificationPriority, NotificationRequest } from "../types/api";
+import type { NotificationRequest } from "../types/api";
 
-const priorities: NotificationPriority[] = ["LOW", "NORMAL", "HIGH"];
 const defaultPayload = JSON.stringify(
   {
     name: "Ada",
@@ -30,10 +29,8 @@ export function TestNotificationPage() {
   );
 
   const [templateKey, setTemplateKey] = useState("");
-  const [externalUserId, setExternalUserId] = useState("test-user");
+  const [userId, setUserId] = useState("test-user");
   const [email, setEmail] = useState("test@example.com");
-  const [category, setCategory] = useState("test");
-  const [priority, setPriority] = useState<NotificationPriority>("NORMAL");
   const [idempotencyKey, setIdempotencyKey] = useState(generateIdempotencyKey);
   const [payloadText, setPayloadText] = useState(defaultPayload);
   const [payloadError, setPayloadError] = useState("");
@@ -73,14 +70,11 @@ export function TestNotificationPage() {
       {
         productId: selectedProductId,
         templateKey,
-        requestedChannels: ["EMAIL"],
-        externalUserId,
+        channel: "EMAIL",
+        userId,
         idempotencyKey,
-        category,
-        priority,
-        payload,
-        recipient: { email },
-        expiresAt: null
+        variables: payload,
+        destination: email
       },
       {
         onSuccess: (notification) => {
@@ -110,19 +104,8 @@ export function TestNotificationPage() {
             </SelectField>
 
             <div className="grid gap-4 sm:grid-cols-2">
-              <TextField label="External user id" value={externalUserId} onChange={(event) => setExternalUserId(event.target.value)} required />
+              <TextField label="User id" value={userId} onChange={(event) => setUserId(event.target.value)} required />
               <TextField label="Recipient email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
-            </div>
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              <TextField label="Category" value={category} onChange={(event) => setCategory(event.target.value)} required />
-              <SelectField label="Priority" value={priority} onChange={(event) => setPriority(event.target.value as NotificationPriority)}>
-                {priorities.map((item) => (
-                  <option key={item} value={item}>
-                    {item}
-                  </option>
-                ))}
-              </SelectField>
             </div>
 
             <TextField
@@ -137,7 +120,7 @@ export function TestNotificationPage() {
             {sendNotification.isError ? <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-ruby">{sendNotification.error.message}</p> : null}
             <Button
               type="submit"
-              disabled={!selectedProductId || !templateKey || !email || !externalUserId || sendNotification.isPending}
+              disabled={!selectedProductId || !templateKey || !email || !userId || sendNotification.isPending}
             >
               {sendNotification.isPending ? "Sending" : "Send test notification"}
             </Button>
@@ -164,7 +147,7 @@ export function TestNotificationPage() {
                     <span className="font-semibold">Template:</span> {sentNotification.templateKey}
                   </p>
                   <p>
-                    <span className="font-semibold">Recipient:</span> {String(sentNotification.recipient.email ?? "")}
+                    <span className="font-semibold">User:</span> {sentNotification.userId}
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-3">
@@ -183,12 +166,10 @@ export function TestNotificationPage() {
                 value={{
                   productId: selectedProductId,
                   templateKey,
-                  requestedChannels: ["EMAIL"],
-                  externalUserId,
+                  channel: "EMAIL",
+                  userId,
                   idempotencyKey,
-                  category,
-                  priority,
-                  recipient: { email }
+                  destination: email
                 }}
               />
             </Panel>

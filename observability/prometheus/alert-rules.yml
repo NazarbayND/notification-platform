@@ -8,20 +8,6 @@ groups:
           severity: warning
         annotations:
           summary: Notification API p95 latency is above 1s
-      - alert: OutboxBacklogGrowing
-        expr: increase(outbox_pending_total[10m]) > 0
-        for: 10m
-        labels:
-          severity: warning
-        annotations:
-          summary: Outbox pending backlog is growing
-      - alert: OutboxOldestEventTooOld
-        expr: outbox_oldest_pending_age_seconds > 300
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: Oldest pending outbox event is older than five minutes
       - alert: WorkerHighFailureRate
         expr: sum(rate(worker_messages_failed_total[5m])) / clamp_min(sum(rate(worker_messages_consumed_total[5m])), 1) > 0.05
         for: 5m
@@ -37,12 +23,12 @@ groups:
         annotations:
           summary: Provider error rate is above 5%
       - alert: DeadLetterEventsDetected
-        expr: (sum(outbox_dead_letter_total) or vector(0)) + (sum(worker_dlq_total) or vector(0)) > 0
+        expr: sum(worker_dlq_total) > 0
         for: 1m
         labels:
           severity: critical
         annotations:
-          summary: Dead-lettered outbox or Kafka worker events detected
+          summary: Kafka worker dead-letter events detected
       - alert: OrchestratorOutboxPublishFailures
         expr: increase(orchestrator_outbox_failures_total[5m]) > 0
         for: 2m

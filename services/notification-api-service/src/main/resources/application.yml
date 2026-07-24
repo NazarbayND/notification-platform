@@ -1,7 +1,4 @@
 notification:
-  broker:
-    intake: ${NOTIFICATION_BROKER_INTAKE:kafka}
-    delivery: ${NOTIFICATION_BROKER_DELIVERY:kafka}
   kafka:
     topics:
       requests: ${NOTIFICATION_KAFKA_TOPICS_REQUESTS:notification.requests.v1}
@@ -10,8 +7,6 @@ notification:
     per-tenant-rate-per-second: ${NOTIFICATION_INTAKE_PER_TENANT_RATE_PER_SECOND:500}
     max-concurrent-requests: ${NOTIFICATION_INTAKE_MAX_CONCURRENT_REQUESTS:1000}
     max-request-bytes: ${NOTIFICATION_INTAKE_MAX_REQUEST_BYTES:262144}
-    max-recipients-per-request: ${NOTIFICATION_INTAKE_MAX_RECIPIENTS_PER_REQUEST:1000}
-    max-channels-per-request: ${NOTIFICATION_INTAKE_MAX_CHANNELS_PER_REQUEST:5}
     kafka-publish-timeout: ${NOTIFICATION_INTAKE_KAFKA_PUBLISH_TIMEOUT:3s}
     acceptance-ttl: ${NOTIFICATION_INTAKE_ACCEPTANCE_TTL:20m}
 
@@ -52,7 +47,7 @@ management:
       show-details: always
       group:
         readiness:
-          include: readinessState,db,redis,kafka
+          include: readinessState,redis,kafka
   health:
     livenessstate:
       enabled: true

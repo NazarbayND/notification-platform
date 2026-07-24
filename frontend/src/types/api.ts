@@ -1,24 +1,15 @@
-export type Channel = "EMAIL" | "SMS" | "PUSH" | "IN_APP";
+export type Channel = "EMAIL" | "SMS" | "PUSH" | "IN_APP" | "WEBHOOK";
 export type ProductStatus = "ACTIVE" | "DISABLED";
 export type TemplateStatus = "DRAFT" | "ACTIVE" | "ARCHIVED";
-export type NotificationPriority = "LOW" | "NORMAL" | "HIGH";
 export type NotificationRequestStatus =
   | "ACCEPTED"
-  | "SENT"
-  | "PARTIAL_FAILED"
-  | "FAILED"
-  | "SKIPPED";
-export type DeliveryStatus =
-  | "PENDING"
   | "PROCESSING"
-  | "SENDING"
-  | "SENT"
+  | "SCHEDULED"
   | "DELIVERED"
+  | "PARTIALLY_DELIVERED"
   | "FAILED"
-  | "RETRY_SCHEDULED"
-  | "DLQ"
-  | "DEAD_LETTERED"
-  | "SKIPPED";
+  | "REJECTED";
+export type DeliveryStatus = "DELIVERED" | "FAILED";
 
 export interface Product {
   id: string;
@@ -43,33 +34,28 @@ export interface Template {
 export interface NotificationRequest {
   id: string;
   productId: string;
-  batchId: string | null;
   templateKey: string;
-  externalUserId: string;
-  idempotencyKey: string;
-  category: string;
-  priority: NotificationPriority;
-  requestedChannels: Channel[];
+  userId: string;
+  channel: Channel;
   status: NotificationRequestStatus;
-  payload: Record<string, unknown>;
-  recipient: Record<string, unknown>;
-  expiresAt: string | null;
-  createdAt: string | null;
+  reasonCode: string | null;
+  reasonMessage: string | null;
+  requestedAt: string | null;
+  updatedAt: string | null;
 }
 
 export interface Delivery {
   id: string;
   notificationRequestId: string;
-  templateId: string;
   channel: Channel;
   status: DeliveryStatus;
   provider: string | null;
-  destination: string;
+  destination: string | null;
   attemptCount: number;
-  maxAttempts: number;
-  nextAttemptAt: string | null;
-  lastErrorMessage: string | null;
-  createdAt: string | null;
+  providerMessageId: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  updatedAt: string | null;
 }
 
 export interface PageResult<T> {
@@ -81,13 +67,10 @@ export interface PageResult<T> {
 
 export interface DashboardStats {
   totalNotificationsToday: number | null;
-  sentCount: number | null;
+  deliveredCount: number | null;
   failedCount: number | null;
-  pendingOutboxCount: number | null;
-  retryCount: number | null;
-  dlqCount: number | null;
+  retryAttemptCount: number | null;
   providerErrorRate: number | null;
-  throughputPerMinute: number | null;
 }
 
 export interface ApiError {

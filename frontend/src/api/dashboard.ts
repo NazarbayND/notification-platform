@@ -13,13 +13,10 @@ export function useDashboardStats() {
       const stats = await request<Partial<DashboardStats>>("/admin/dashboard");
       return {
         totalNotificationsToday: stats.totalNotificationsToday ?? 0,
-        sentCount: stats.sentCount ?? 0,
+        deliveredCount: stats.deliveredCount ?? 0,
         failedCount: stats.failedCount ?? 0,
-        pendingOutboxCount: stats.pendingOutboxCount ?? 0,
-        retryCount: stats.retryCount ?? 0,
-        dlqCount: stats.dlqCount ?? 0,
-        providerErrorRate: stats.providerErrorRate ?? 0,
-        throughputPerMinute: stats.throughputPerMinute ?? 0
+        retryAttemptCount: stats.retryAttemptCount ?? 0,
+        providerErrorRate: stats.providerErrorRate ?? 0
       };
     }
   });

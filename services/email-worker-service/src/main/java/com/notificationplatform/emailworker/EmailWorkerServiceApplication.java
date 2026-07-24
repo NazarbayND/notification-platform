@@ -12,13 +12,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
-import org.springframework.amqp.core.Binding;
-import org.springframework.amqp.core.BindingBuilder;
-import org.springframework.amqp.core.DirectExchange;
-import org.springframework.amqp.core.Queue;
-import org.springframework.messaging.handler.annotation.Header;
-import org.springframework.amqp.rabbit.annotation.RabbitListener;
-import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -44,35 +37,12 @@ import org.slf4j.MDC;
 @SpringBootApplication
 public class EmailWorkerServiceApplication {
 
-    static final String DELIVERY_EXCHANGE = "notification.delivery";
-    static final String EMAIL_QUEUE = "delivery.email";
-
     public static void main(String[] args) {
         SpringApplication.run(EmailWorkerServiceApplication.class, args);
     }
 
     private static java.sql.Timestamp ts(Instant instant) {
         return instant == null ? null : java.sql.Timestamp.from(instant);
-    }
-
-    @Bean
-    Jackson2JsonMessageConverter jackson2JsonMessageConverter(ObjectMapper objectMapper) {
-        return new Jackson2JsonMessageConverter(objectMapper);
-    }
-
-    @Bean
-    DirectExchange deliveryExchange() {
-        return new DirectExchange(DELIVERY_EXCHANGE, true, false);
-    }
-
-    @Bean
-    Queue emailQueue() {
-        return new Queue(EMAIL_QUEUE, true);
-    }
-
-    @Bean
-    Binding emailBinding(Queue emailQueue, DirectExchange deliveryExchange) {
-        return BindingBuilder.bind(emailQueue).to(deliveryExchange).with("EMAIL");
     }
 
     @RestController
@@ -130,22 +100,21 @@ public class EmailWorkerServiceApplication {
     }
 
     @org.springframework.stereotype.Component
-    static class EmailDeliveryConsumer {
+    static class EmailDeliveryProcessor {
         private final DeliveryRepository repository;
         private final EmailProvider provider;
         private final MeterRegistry meterRegistry;
 
-        EmailDeliveryConsumer(DeliveryRepository repository, EmailProvider provider, MeterRegistry meterRegistry) {
+        EmailDeliveryProcessor(DeliveryRepository repository, EmailProvider provider, MeterRegistry meterRegistry) {
             this.repository = repository;
             this.provider = provider;
             this.meterRegistry = meterRegistry;
         }
 
-        @RabbitListener(queues = EMAIL_QUEUE)
-        void consume(DeliveryJob job, @Header(name = "X-Correlation-Id", required = false) String correlationId) {
+        void process(DeliveryJob job) {
             Timer.Sample processingTimer = Timer.start(meterRegistry);
             meterRegistry.counter("worker_messages_consumed_total", "service", "email-worker-service", "channel", "EMAIL").increment();
-            putMdc(job, correlationId);
+            putMdc(job);
             try {
                 if (!repository.markProcessing(job.eventId())) {
                     meterRegistry.counter("worker_duplicate_events_skipped_total", "service", "email-worker-service", "channel", "EMAIL").increment();
@@ -175,17 +144,13 @@ public class EmailWorkerServiceApplication {
             }
         }
 
-        private void putMdc(DeliveryJob job, String correlationId) {
-            if (correlationId != null && !correlationId.isBlank()) {
-                MDC.put("correlationId", correlationId);
-            }
+        private void putMdc(DeliveryJob job) {
             MDC.put("eventId", job.eventId().toString());
             MDC.put("notificationId", job.notificationId().toString());
             MDC.put("channel", "EMAIL");
         }
 
         private void clearMdc() {
-            MDC.remove("correlationId");
             MDC.remove("eventId");
             MDC.remove("notificationId");
             MDC.remove("channel");
@@ -229,24 +194,6 @@ public class EmailWorkerServiceApplication {
                     UUID.randomUUID(), job.eventId(), job.notificationId(), job.deliveryId(), job.destination(),
                     result.provider(), result.providerMessageId(), result.status(), writeJson(result.rawResponse()),
                     result.errorCode(), result.errorMessage(), ts(result.sentAt()), ts(now));
-            updateNotificationStatus(job, result, now);
-        }
-
-        private void updateNotificationStatus(DeliveryJob job, ProviderResult result, Instant now) {
-            jdbc.update("""
-                    UPDATE notification_api.notification_deliveries
-                    SET status = ?, attempt_count = attempt_count + 1, updated_at = ?
-                    WHERE id = ?
-                    """, result.status(), ts(now), job.deliveryId());
-            jdbc.update("""
-                    UPDATE notification_api.notifications
-                    SET status = ?, updated_at = ?
-                    WHERE id = ?
-                    """, notificationStatus(result.status()), ts(now), job.notificationId());
-        }
-
-        private String notificationStatus(String deliveryStatus) {
-            return "SENT".equals(deliveryStatus) ? "SENT" : "FAILED";
         }
 
         private String writeJson(Object value) {
@@ -290,7 +237,7 @@ public class EmailWorkerServiceApplication {
         ProviderResult sendEmail(SendEmailCommand command);
     }
 
-    record DeliveryJob(UUID eventId, UUID notificationId, UUID deliveryId, String channel, String destination, String subject, String body, String priority, String correlationId) {
+    record DeliveryJob(UUID eventId, UUID notificationId, UUID deliveryId, String destination, String subject, String body) {
     }
 
     record SendEmailCommand(@NotBlank String recipient, @NotBlank String subject, @NotBlank String body, String eventId, String notificationId) {

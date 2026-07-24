@@ -19,13 +19,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
-import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.context.annotation.Bean;
-import org.springframework.http.HttpStatusCode;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -38,18 +33,12 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.client.RestClient;
 
 @EnableScheduling
 @SpringBootApplication
 public class NotificationOrchestratorApplication {
     public static void main(String[] args) {
         SpringApplication.run(NotificationOrchestratorApplication.class, args);
-    }
-
-    @Bean
-    Jackson2JsonMessageConverter rabbitJsonConverter(ObjectMapper objectMapper) {
-        return new Jackson2JsonMessageConverter(objectMapper);
     }
 
     @RestController
@@ -90,21 +79,15 @@ class NotificationRequestConsumer {
 class OrchestrationService {
     private final OrchestratorRepository repository;
     private final ReferenceResolver resolver;
-    private final ObjectMapper objectMapper;
     private final MeterRegistry meterRegistry;
-    private final String deliveryBroker;
 
     OrchestrationService(
             OrchestratorRepository repository,
             ReferenceResolver resolver,
-            ObjectMapper objectMapper,
-            MeterRegistry meterRegistry,
-            @Value("${notification.broker.delivery:kafka}") String deliveryBroker) {
+            MeterRegistry meterRegistry) {
         this.repository = repository;
         this.resolver = resolver;
-        this.objectMapper = objectMapper;
         this.meterRegistry = meterRegistry;
-        this.deliveryBroker = deliveryBroker;
     }
 
     @Transactional
@@ -164,16 +147,7 @@ class OrchestrationService {
     private void enqueueDelivery(NotificationRequested request, DeliveryRequested delivery) {
         String topic = "notification." + delivery.channel().toLowerCase().replace('_', '-') + ".v1";
         String key = request.tenantId() + ":" + delivery.recipientId();
-        if ("rabbitmq".equalsIgnoreCase(deliveryBroker)) {
-            Map<String, Object> rabbitJob = Map.of(
-                    "eventId", delivery.eventId(), "notificationId", delivery.notificationId(),
-                    "deliveryId", delivery.deliveryId(), "channel", delivery.channel(),
-                    "destination", delivery.recipientAddress(), "subject", nullToEmpty(delivery.subject()),
-                    "body", delivery.body(), "priority", "NORMAL", "correlationId", request.requestId());
-            repository.enqueue(delivery.eventId(), "RABBIT", "notification.delivery", delivery.channel(), rabbitJob);
-        } else {
-            repository.enqueue(delivery.eventId(), "KAFKA", topic, key, delivery);
-        }
+        repository.enqueue(delivery.eventId(), "KAFKA", topic, key, delivery);
     }
 
     private void enqueueStatus(NotificationRequested request, String status, String reasonCode, String reasonMessage) {
@@ -195,31 +169,16 @@ class OrchestrationService {
         };
     }
 
-    private String nullToEmpty(String value) {
-        return value == null ? "" : value;
-    }
 }
 
 @Service
 class ReferenceResolver {
     private final OrchestratorRepository repository;
-    private final RestClient templateClient;
-    private final RestClient preferenceClient;
-    private final boolean synchronousFallback;
     private final MeterRegistry meterRegistry;
 
-    ReferenceResolver(
-            OrchestratorRepository repository,
-            RestClient.Builder restClientBuilder,
-            MeterRegistry meterRegistry,
-            @Value("${orchestrator.reference.sync-fallback-enabled:false}") boolean synchronousFallback,
-            @Value("${TEMPLATE_SERVICE_URL:http://localhost:8082}") String templateUrl,
-            @Value("${PREFERENCE_SERVICE_URL:http://localhost:8083}") String preferenceUrl) {
+    ReferenceResolver(OrchestratorRepository repository, MeterRegistry meterRegistry) {
         this.repository = repository;
         this.meterRegistry = meterRegistry;
-        this.synchronousFallback = synchronousFallback;
-        this.templateClient = restClientBuilder.clone().baseUrl(templateUrl).build();
-        this.preferenceClient = restClientBuilder.clone().baseUrl(preferenceUrl).build();
     }
 
     boolean preferenceAllowed(NotificationRequested request, String channel) {
@@ -227,19 +186,7 @@ class ReferenceResolver {
         try {
             Optional<Boolean> projected = repository.preference(
                     request.productId(), request.recipient().userId(), request.productId(), channel);
-            if (projected.isPresent()) return projected.get();
-            if (!synchronousFallback) {
-                throw new OrchestrationRejection("PREFERENCE_PROJECTION_MISS", "Preference projection is not ready");
-            }
-            PreferenceDecision response = preferenceClient.get()
-                    .uri(uri -> uri.path("/preferences/check")
-                            .queryParam("userId", request.recipient().userId())
-                            .queryParam("productId", request.productId())
-                            .queryParam("channel", channel).build())
-                    .retrieve().onStatus(HttpStatusCode::isError, (req, res) -> {
-                        throw new OrchestrationRejection("PREFERENCE_LOOKUP_FAILED", "Preference lookup failed");
-                    }).body(PreferenceDecision.class);
-            return response != null && response.allowed();
+            return projected.orElse(true);
         } finally {
             sample.stop(Timer.builder("orchestrator_preference_resolution_latency").register(meterRegistry));
         }
@@ -250,17 +197,7 @@ class ReferenceResolver {
         try {
             Optional<TemplateProjection> projected = repository.template(request.productId(), request.templateId(), channel);
             if (projected.isPresent()) return render(projected.get(), request.variables());
-            if (!synchronousFallback) {
-                throw new OrchestrationRejection("TEMPLATE_PROJECTION_MISS", "Template projection is not ready");
-            }
-            RenderedContent response = templateClient.post().uri("/templates/render")
-                    .body(Map.of("productId", request.productId(), "templateKey", request.templateId(),
-                            "channel", channel, "variables", request.variables()))
-                    .retrieve().onStatus(HttpStatusCode::isError, (req, res) -> {
-                        throw new OrchestrationRejection("TEMPLATE_RENDER_FAILED", "Template rendering failed");
-                    }).body(RenderedContent.class);
-            if (response == null) throw new OrchestrationRejection("TEMPLATE_RENDER_FAILED", "Empty template response");
-            return response;
+            throw new OrchestrationRejection("TEMPLATE_PROJECTION_MISS", "Template projection is not ready");
         } finally {
             sample.stop(Timer.builder("orchestrator_render_latency").register(meterRegistry));
         }
@@ -445,13 +382,12 @@ class OrchestratorRepository {
 class OrchestrationOutboxPublisher {
     private final OrchestratorRepository repository;
     private final KafkaTemplate<Object, Object> kafka;
-    private final RabbitTemplate rabbit;
     private final ObjectMapper mapper;
     private final MeterRegistry meters;
 
     OrchestrationOutboxPublisher(OrchestratorRepository repository, KafkaTemplate<Object,Object> kafka,
-            RabbitTemplate rabbit, ObjectMapper mapper, MeterRegistry meters) {
-        this.repository = repository; this.kafka = kafka; this.rabbit = rabbit; this.mapper = mapper; this.meters = meters;
+            ObjectMapper mapper, MeterRegistry meters) {
+        this.repository = repository; this.kafka = kafka; this.mapper = mapper; this.meters = meters;
     }
 
     @Scheduled(fixedDelayString = "${orchestrator.outbox.fixed-delay-ms:250}")
@@ -460,12 +396,7 @@ class OrchestrationOutboxPublisher {
         for (OutboxRecord event : repository.claimOutbox(200)) {
             try {
                 JsonNode payload = mapper.readTree(event.payload());
-                if ("KAFKA".equals(event.targetType())) {
-                    kafka.send(event.targetName(), event.messageKey(), payload).get(5, TimeUnit.SECONDS);
-                } else {
-                    Map<String,Object> job = mapper.convertValue(payload, new TypeReference<>() {});
-                    rabbit.convertAndSend(event.targetName(), event.messageKey(), job);
-                }
+                kafka.send(event.targetName(), event.messageKey(), payload).get(5, TimeUnit.SECONDS);
                 repository.published(event.eventId());
                 meters.counter("orchestrator_outbox_published_total", "target", event.targetType().toLowerCase()).increment();
             } catch (Exception exception) {
@@ -478,7 +409,6 @@ class OrchestrationOutboxPublisher {
 
 record TemplateProjection(String aggregateId, String subject, String body, List<String> requiredVariables) {}
 record RenderedContent(String templateId, String subject, String body, List<String> missingVariables) {}
-record PreferenceDecision(String userId, String productId, String channel, boolean allowed) {}
 record OutboxRecord(String eventId, String targetType, String targetName, String messageKey, String payload, int attempt) {}
 
 class OrchestrationRejection extends RuntimeException {

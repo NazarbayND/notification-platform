@@ -12,13 +12,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
-import org.springframework.amqp.core.Binding;
-import org.springframework.amqp.core.BindingBuilder;
-import org.springframework.amqp.core.DirectExchange;
-import org.springframework.amqp.core.Queue;
-import org.springframework.messaging.handler.annotation.Header;
-import org.springframework.amqp.rabbit.annotation.RabbitListener;
-import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -41,35 +34,12 @@ import org.springframework.web.bind.annotation.RestController;
 @SpringBootApplication
 public class PushWorkerServiceApplication {
 
-    static final String DELIVERY_EXCHANGE = "notification.delivery";
-    static final String PUSH_QUEUE = "delivery.push";
-
     public static void main(String[] args) {
         SpringApplication.run(PushWorkerServiceApplication.class, args);
     }
 
     private static java.sql.Timestamp ts(Instant instant) {
         return instant == null ? null : java.sql.Timestamp.from(instant);
-    }
-
-    @Bean
-    Jackson2JsonMessageConverter jackson2JsonMessageConverter(ObjectMapper objectMapper) {
-        return new Jackson2JsonMessageConverter(objectMapper);
-    }
-
-    @Bean
-    DirectExchange deliveryExchange() {
-        return new DirectExchange(DELIVERY_EXCHANGE, true, false);
-    }
-
-    @Bean
-    Queue pushQueue() {
-        return new Queue(PUSH_QUEUE, true);
-    }
-
-    @Bean
-    Binding pushBinding(Queue pushQueue, DirectExchange deliveryExchange) {
-        return BindingBuilder.bind(pushQueue).to(deliveryExchange).with("PUSH");
     }
 
     @RestController
@@ -127,22 +97,21 @@ public class PushWorkerServiceApplication {
     }
 
     @org.springframework.stereotype.Component
-    static class PushDeliveryConsumer {
+    static class PushDeliveryProcessor {
         private final DeliveryRepository repository;
         private final PushProvider provider;
         private final MeterRegistry meterRegistry;
 
-        PushDeliveryConsumer(DeliveryRepository repository, PushProvider provider, MeterRegistry meterRegistry) {
+        PushDeliveryProcessor(DeliveryRepository repository, PushProvider provider, MeterRegistry meterRegistry) {
             this.repository = repository;
             this.provider = provider;
             this.meterRegistry = meterRegistry;
         }
 
-        @RabbitListener(queues = PUSH_QUEUE)
-        void consume(DeliveryJob job, @Header(name = "X-Correlation-Id", required = false) String correlationId) {
+        void process(DeliveryJob job) {
             Timer.Sample processingTimer = Timer.start(meterRegistry);
             meterRegistry.counter("worker_messages_consumed_total", "service", "push-worker-service", "channel", "PUSH").increment();
-            putContext(job, correlationId);
+            putContext(job);
             try {
                 if (!repository.markProcessing(job.eventId())) {
                     meterRegistry.counter("worker_duplicate_events_skipped_total", "service", "push-worker-service", "channel", "PUSH").increment();
@@ -172,12 +141,7 @@ public class PushWorkerServiceApplication {
             }
         }
 
-        private void putContext(DeliveryJob job, String correlationId) {
-            if (correlationId != null && !correlationId.isBlank()) {
-                MDC.put("correlationId", correlationId);
-            } else if (job.correlationId() != null && !job.correlationId().isBlank()) {
-                MDC.put("correlationId", job.correlationId());
-            }
+        private void putContext(DeliveryJob job) {
             MDC.put("eventId", String.valueOf(job.eventId()));
             MDC.put("notificationId", String.valueOf(job.notificationId()));
             MDC.put("channel", "PUSH");
@@ -217,24 +181,6 @@ public class PushWorkerServiceApplication {
                     UUID.randomUUID(), job.eventId(), job.notificationId(), job.deliveryId(), job.destination(),
                     result.provider(), result.providerMessageId(), result.status(), writeJson(result.rawResponse()),
                     result.errorCode(), result.errorMessage(), ts(result.sentAt()), ts(now));
-            updateNotificationStatus(job, result, now);
-        }
-
-        private void updateNotificationStatus(DeliveryJob job, ProviderResult result, Instant now) {
-            jdbc.update("""
-                    UPDATE notification_api.notification_deliveries
-                    SET status = ?, attempt_count = attempt_count + 1, updated_at = ?
-                    WHERE id = ?
-                    """, result.status(), ts(now), job.deliveryId());
-            jdbc.update("""
-                    UPDATE notification_api.notifications
-                    SET status = ?, updated_at = ?
-                    WHERE id = ?
-                    """, notificationStatus(result.status()), ts(now), job.notificationId());
-        }
-
-        private String notificationStatus(String deliveryStatus) {
-            return "SENT".equals(deliveryStatus) ? "SENT" : "FAILED";
         }
 
         private String writeJson(Object value) {
@@ -270,7 +216,7 @@ public class PushWorkerServiceApplication {
         ProviderResult sendPush(SendPushCommand command);
     }
 
-    record DeliveryJob(UUID eventId, UUID notificationId, UUID deliveryId, String channel, String destination, String subject, String body, String priority, String correlationId) {
+    record DeliveryJob(UUID eventId, UUID notificationId, UUID deliveryId, String destination, String subject, String body) {
     }
 
     record SendPushCommand(@NotBlank String recipient, @NotBlank String title, @NotBlank String body, String eventId, String notificationId) {

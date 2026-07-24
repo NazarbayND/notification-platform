@@ -25,6 +25,22 @@ The wrapper writes a machine-readable k6 summary to `build/load-results/intake-s
 
 The Phase 1 synchronous baseline was 300/300 accepted at 20 RPS for 15 seconds, p95 15.78 ms on the documented local machine. It is not a maximum capacity result.
 
+## Post-cleanup verification
+
+The cleaned Kafka-only local topology was verified on 2026-07-24 with
+PostgreSQL, Kafka, Redis, the eleven backend services, the admin frontend,
+Prometheus, Grafana, and OpenTelemetry running in Docker Compose.
+
+| Scenario | Duration / rate | Completed | Result | p50 | p95 | p99 | Max |
+| --- | --- | ---: | --- | ---: | ---: | ---: | ---: |
+| Kafka intake smoke load | 5 s / 20 RPS | 101 | 101 accepted; 0 failed or unexpected | 7.64 ms | 13.02 ms | 21.67 ms | 38.74 ms |
+| PUSH end-to-end load | 5 s / 10 RPS | 51 | 51 delivered; 0 failed, timed out, or dropped | 272 ms | 533.5 ms | 537.5 ms | 539 ms |
+
+The machine-readable summaries are
+`build/load-results/cleanup-intake-summary.json` and
+`build/load-results/cleanup-e2e-summary.json`. These are short local smoke
+loads, not production capacity claims.
+
 ## Recorded Phase 3 results
 
 Run on 2026-07-10 against the local single-broker KRaft stack:

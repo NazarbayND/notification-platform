@@ -25,7 +25,7 @@ class KafkaIntakeServiceTest {
 
     @Test
     void publishesDurablyBeforeReturningAccepted() {
-        KafkaTemplate<Object, Object> kafka = mock(KafkaTemplate.class);
+        KafkaTemplate<Object, Object> kafka = kafkaTemplate();
         AcceptanceCache cache = mock(AcceptanceCache.class);
         when(cache.findByIdempotency("tenant-1", "key-1")).thenReturn(Optional.empty());
         when(kafka.send(eq("notification.requests.v1"), eq("tenant-1:user-1"), any()))
@@ -49,12 +49,12 @@ class KafkaIntakeServiceTest {
 
     @Test
     void returnsCachedAcceptanceForAnIdempotentRetryWithoutRepublishing() {
-        KafkaTemplate<Object, Object> kafka = mock(KafkaTemplate.class);
+        KafkaTemplate<Object, Object> kafka = kafkaTemplate();
         AcceptanceCache cache = mock(AcceptanceCache.class);
         NotificationApiServiceApplication.NotificationAccepted previous =
                 new NotificationApiServiceApplication.NotificationAccepted(
                         java.util.UUID.randomUUID(), java.util.UUID.randomUUID(), "ACCEPTED",
-                        java.time.Instant.now(), "old-correlation", "EMAIL", null);
+                        java.time.Instant.now(), "old-correlation", "EMAIL");
         when(cache.findByIdempotency("tenant-1", "key-1")).thenReturn(Optional.of(previous));
         KafkaNotificationIntakeService service = new KafkaNotificationIntakeService(
                 kafka, new NotificationKafkaTopics(), new NotificationIntakeProperties(), cache,
@@ -66,7 +66,7 @@ class KafkaIntakeServiceTest {
 
     @Test
     void failsFastWhenKafkaDoesNotAcknowledgeWithinTheConfiguredTimeout() {
-        KafkaTemplate<Object, Object> kafka = mock(KafkaTemplate.class);
+        KafkaTemplate<Object, Object> kafka = kafkaTemplate();
         AcceptanceCache cache = mock(AcceptanceCache.class);
         when(cache.findByIdempotency("tenant-1", "key-1")).thenReturn(Optional.empty());
         when(kafka.send(eq("notification.requests.v1"), eq("tenant-1:user-1"), any()))
@@ -83,7 +83,7 @@ class KafkaIntakeServiceTest {
 
     @Test
     void partitionKeyCombinesTenantAndRecipient() {
-        assertThat(NotificationIntakeRouter.partitionKey("tenant-a", "user-b"))
+        assertThat(NotificationIntakeService.partitionKey("tenant-a", "user-b"))
                 .isEqualTo("tenant-a:user-b");
     }
 
@@ -92,7 +92,7 @@ class KafkaIntakeServiceTest {
         var validator = Validation.buildDefaultValidatorFactory().getValidator();
         var invalid = new NotificationApiServiceApplication.NotificationRequest(
                 "user-1", "product-1", "FAX", "welcome", Map.of(), "", "destination",
-                "NORMAL", "tenant-1", null);
+                "tenant-1", null);
 
         assertThat(validator.validate(invalid))
                 .extracting(violation -> violation.getPropertyPath().toString())
@@ -129,6 +129,11 @@ class KafkaIntakeServiceTest {
     private NotificationApiServiceApplication.NotificationRequest request() {
         return new NotificationApiServiceApplication.NotificationRequest(
                 "user-1", "product-1", "EMAIL", "welcome", Map.of("name", "Ada"),
-                "key-1", "user@example.com", "NORMAL", "tenant-1", null);
+                "key-1", "user@example.com", "tenant-1", null);
+    }
+
+    @SuppressWarnings("unchecked")
+    private KafkaTemplate<Object, Object> kafkaTemplate() {
+        return mock(KafkaTemplate.class);
     }
 }

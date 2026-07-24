@@ -13,7 +13,7 @@ sequenceDiagram
     A-->>C: 503 + Retry-After: 1
 ```
 
-The API must not create legacy notification/outbox rows in Kafka mode and must not wait for a generic HTTP timeout.
+The API owns no notification database tables and must not wait for a generic HTTP timeout.
 
 ## Provider slowdown
 

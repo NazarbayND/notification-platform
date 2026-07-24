@@ -1,6 +1,4 @@
 spring:
-  config:
-    import: optional:classpath:application-common.yml
   application:
     name: preference-service
   kafka:

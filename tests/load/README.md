@@ -1,6 +1,6 @@
 # Notification Platform Load Tests
 
-Kafka-first k6 scenarios for intake, end-to-end delivery, burst, and stress behavior.
+k6 scenarios for Kafka intake, end-to-end delivery, burst, and stress behavior.
 
 For the Kafka-first intake test and a machine-readable summary, prefer:
 
@@ -44,4 +44,4 @@ BASE_URL=http://localhost:8081 PROJECTION_URL=http://localhost:8092 ./scripts/lo
 - If result lag grows, inspect the active projection store and connection/capacity limits.
 - If provider errors grow, the provider or test provider is the bottleneck.
 
-No Phase 4–10 scenario has been run yet. Do not infer capacity from the configured rates or thresholds.
+Historical results and their exact topology are recorded in `docs/load-testing.md`. Do not infer current or production capacity from configured rates, thresholds, or an older run.

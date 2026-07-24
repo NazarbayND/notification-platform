@@ -38,15 +38,6 @@ spec:
             - name: SPRING_DATASOURCE_PASSWORD
               valueFrom:
                 secretKeyRef: {name: notification-platform-secrets, key: POSTGRES_PASSWORD}
-            - name: SPRING_RABBITMQ_HOST
-              valueFrom:
-                configMapKeyRef: {name: notification-platform-config, key: RABBITMQ_HOST}
-            - name: SPRING_RABBITMQ_USERNAME
-              valueFrom:
-                secretKeyRef: {name: notification-platform-secrets, key: RABBITMQ_USER}
-            - name: SPRING_RABBITMQ_PASSWORD
-              valueFrom:
-                secretKeyRef: {name: notification-platform-secrets, key: RABBITMQ_PASSWORD}
           readinessProbe:
             httpGet: {path: /actuator/health/readiness, port: 8091}
             initialDelaySeconds: 20

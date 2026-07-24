@@ -1,137 +1,105 @@
 # Notification Platform
 
-Learning-focused notification platform implemented as Spring Boot microservices.
+A learning-focused, Kafka-based notification platform implemented as Spring Boot microservices with a React admin UI.
 
-The root project is a Maven workspace aggregator. Production behavior lives in `services/`; the previous single-application source tree has been removed.
+## Architecture at a glance
 
-## Services
+```mermaid
+flowchart LR
+    Client --> API[Notification API]
+    API --> Requests[(notification.requests.v1)]
+    Requests --> Orchestrator
+    Templates[(template.events.v1)] --> Orchestrator
+    Preferences[(preference.events.v1)] --> Orchestrator
+    Orchestrator --> Channels[(Channel topics)]
+    Channels --> Workers[Channel workers]
+    Workers --> Results[(Delivery results)]
+    Orchestrator --> Status[(Status events)]
+    Requests & Results & Status --> Projection
+    Projection --> API
+    Projection --> BFF[Admin BFF]
+    BFF --> UI[Admin UI]
+```
 
-| Service | Port | Owns |
+The API returns `202 Accepted` only after Kafka acknowledges the request. `ACCEPTED` means the command is durable in Kafka; it does not mean provider delivery has completed.
+
+## Components
+
+| Component | Port | Responsibility |
 | --- | ---: | --- |
-| `notification-api-service` | 8081 | Admission-controlled Kafka-first intake, acceptance status, legacy DB/outbox rollback path |
-| `shared-event-contracts` | — | Versioned Kafka JSON DTOs; no persistence entities |
-| `template-service` | 8082 | Template CRUD, rendering, variable validation |
-| `preference-service` | 8083 | User/product/channel preferences |
-| `notification-orchestrator-service` | 8091 | Durable request orchestration, local reference projections, delivery/status outbox |
-| `notification-projection-service` | 8092 | Rebuildable PostgreSQL notification and delivery query model |
-| `outbox-publisher-service` | 8084 | Outbox polling, locking, RabbitMQ publishing, retry state |
-| `email-worker-service` | 8085 | Email delivery attempts, SMTP/test email providers |
-| `sms-worker-service` | 8086 | SMS delivery attempts and local SMS test inbox |
-| `push-worker-service` | 8087 | Push delivery attempts and local push test inbox |
-| `admin-bff-service` | 8088 | Admin aggregation across services |
-| `in-app-worker-service` | 8089 | In-app delivery attempts and user in-app notifications |
-| `webhook-worker-service` | 8090 | Webhook delivery attempts and local webhook receiver |
-| `worker-kafka-support` | — | Shared Kafka retry, DLQ, concurrency, rate-limit, and result publishing support |
-| `admin-frontend` | 5173 | Admin UI |
+| `notification-api-service` | 8081 | Validation, admission control, Kafka intake, acceptance cache, projection reads |
+| `notification-orchestrator-service` | 8091 | Idempotent orchestration, template/preference projections, durable delivery/status outbox |
+| `notification-projection-service` | 8092 | Rebuildable notification and delivery query model |
+| `template-service` | 8082 | Products, templates, rendering, template change events |
+| `preference-service` | 8083 | User/channel preferences and preference change events |
+| `email-worker-service` | 8085 | Email delivery through SMTP or the test provider |
+| `sms-worker-service` | 8086 | SMS delivery and local test inbox |
+| `push-worker-service` | 8087 | Push delivery and local test inbox |
+| `in-app-worker-service` | 8089 | Durable in-app inbox |
+| `webhook-worker-service` | 8090 | Webhook delivery and local receiver |
+| `admin-bff-service` | 8088 | Admin-facing API composition |
+| `admin-frontend` | 5173 | React admin UI |
 
-Local infrastructure:
+Shared modules:
 
-- PostgreSQL: `localhost:5432`
-- RabbitMQ: `localhost:5672`, management UI `localhost:15672`
-- Redis: `localhost:6379`
-- Kafka: `localhost:9092`, Kafka UI `localhost:8080`
-- MailHog: SMTP `localhost:1025`, UI `localhost:8025`
+- `shared-event-contracts`: versioned Kafka DTOs.
+- `worker-kafka-support`: retry, DLQ, rate limiting, deduplication, and result publishing.
+- `platform-common`: shared platform configuration.
 
-## Local Run
+Local infrastructure includes PostgreSQL (`5432`), Redis (`6379`), Kafka (`9092`), Kafka UI (`8080`), MailHog (`8025`), Prometheus (`9090`), Grafana (`3000`), Loki, Jaeger (`16686`), and the OpenTelemetry Collector.
+
+## Run locally
+
+Requirements: Java 21, Maven, Node.js 20 or newer with npm, Docker, and Docker Compose.
 
 ```bash
-mvn test
-mvn -f services/pom.xml package -DskipTests
+mvn -f services/pom.xml test
+npm --prefix frontend ci
+npm --prefix frontend run build
 docker compose up -d --build
 ```
 
-The root `docker-compose.yml` includes `docker-compose.microservices.yml`, so `docker compose up` starts the microservices topology.
+The root `docker-compose.yml` includes `docker-compose.microservices.yml`.
 
-## Main Flow (Phases 1–8)
+Example request:
 
-1. `POST /notifications` on `notification-api-service`.
-2. The API validates the body and applies Redis-backed global/per-tenant rates plus a local concurrency cap.
-3. The API publishes `NotificationRequested` to `notification.requests.v1` and waits for an `acks=all` acknowledgement within a finite deadline.
-4. The API stores short-lived Redis acceptance/idempotency state and returns `202 Accepted`.
-5. The orchestrator deduplicates durably, resolves its event-fed template/preference projections, and writes channel commands plus status events through its own outbox.
-6. Kafka channel workers persist attempts, publish results, and route transient failures through 1m/5m/30m retry topics before DLQ.
-7. The projection service consumes request, status, and result topics for API/admin reads.
-
-`ACCEPTED` means Kafka durably accepted the command; it does not mean provider delivery succeeded. Kafka is the default intake and delivery broker. The legacy notification API outbox publisher and RabbitMQ consumers remain available only as a rollback path.
-
-```json
-{
-  "notificationId": "3a6c5b82-...",
-  "requestId": "6948c028-...",
-  "status": "ACCEPTED",
-  "acceptedAt": "2026-07-10T12:00:00Z"
-}
+```bash
+curl -i http://localhost:8081/notifications \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "userId": "user-1",
+    "productId": "demo-product",
+    "channel": "EMAIL",
+    "templateKey": "welcome",
+    "variables": {"name": "Ada"},
+    "idempotencyKey": "welcome-user-1",
+    "destination": "ada@example.com"
+  }'
 ```
 
-## Useful Endpoints
+## Useful endpoints
 
-Notification API:
-
-- `POST http://localhost:8081/notifications`
-- `GET http://localhost:8081/notifications`
-- `GET http://localhost:8081/notifications/{id}`
-- `GET http://localhost:8081/notifications/{id}/status`
-
-Projection API:
-
-- `GET http://localhost:8092/projections/notifications?tenantId={tenantId}`
-- `GET http://localhost:8092/projections/notifications/{id}`
-- `GET http://localhost:8092/projections/notifications/{id}/deliveries`
-- `GET http://localhost:8092/projections/deliveries`
-
-Templates:
-
-- `GET http://localhost:8082/templates`
-- `POST http://localhost:8082/templates`
-- `PUT http://localhost:8082/templates/{id}`
-- `POST http://localhost:8082/templates/{id}/preview`
-- `POST http://localhost:8082/templates/render`
-
-Preferences:
-
-- `GET http://localhost:8083/preferences`
-- `POST http://localhost:8083/preferences`
-- `PUT http://localhost:8083/preferences/{id}`
-- `GET http://localhost:8083/preferences/check`
-
-Outbox:
-
-- `GET http://localhost:8084/outbox/events`
-- `POST http://localhost:8084/outbox/events/poll`
-- `POST http://localhost:8084/outbox/events/{id}/retry`
-
-Test inboxes:
-
-- MailHog UI: `http://localhost:8025`
-- SMS: `GET http://localhost:8086/test/sms-messages`
-- Push: `GET http://localhost:8087/test/push-messages`
-- In-app: `GET http://localhost:8089/test/in-app-notifications`
-- Webhook receiver: `POST http://localhost:8090/webhooks/test`
-- Webhook inbox: `GET http://localhost:8090/received-webhooks`
-
-Admin BFF:
-
-- `GET http://localhost:8088/admin/dashboard/stats`
-- `GET http://localhost:8088/admin/notifications`
-- `GET http://localhost:8088/admin/outbox-events`
-- `GET http://localhost:8088/admin/templates`
-- `GET http://localhost:8088/admin/preferences`
-- `GET http://localhost:8088/admin/test/sms-messages`
-- `GET http://localhost:8088/admin/test/push-messages`
-- `GET http://localhost:8088/admin/test/in-app-notifications`
-- `GET http://localhost:8088/admin/test/webhook-requests`
+- Notification intake: `POST http://localhost:8081/notifications`
+- Notification query: `GET http://localhost:8081/notifications/{id}`
+- Projection query: `GET http://localhost:8092/projections/notifications`
+- Templates: `GET http://localhost:8082/templates`
+- Preferences: `GET http://localhost:8083/preferences`
+- Admin API: `GET http://localhost:8088/admin/dashboard`
+- MailHog: `http://localhost:8025`
+- Kafka UI: `http://localhost:8080`
+- Grafana: `http://localhost:3000`
 
 ## Documentation
 
-- [Kafka-first migration plan](docs/kafka-first-migration-plan.md)
-- [Kafka-first architecture](docs/kafka-first-architecture.md)
-- [Migration baseline](docs/kafka-migration-baseline.md)
-- [Migration implementation status](docs/migration-implementation-status.md)
-- [Backpressure and admission control](docs/backpressure-and-admission-control.md)
+- [Architecture](docs/architecture.md)
+- [Comprehensive codebase guide](docs/codebase-understanding-guide.md)
 - [Event contracts](docs/event-contracts.md)
+- [Delivery semantics](docs/delivery-semantics.md)
 - [Storage strategy](docs/storage-strategy.md)
-- [Load and resilience testing](docs/load-testing.md)
+- [Backpressure and admission control](docs/backpressure-and-admission-control.md)
+- [Retry and DLQ behavior](docs/retry-and-dlq.md)
+- [Local runbook](docs/local-run-kafka.md)
+- [Load testing](docs/load-testing.md)
+- [Failure scenarios](docs/failure-scenarios.md)
+- [Observability](docs/observability.md)
 - [Kubernetes configuration](docs/kubernetes-configuration.md)
-- [Local Kafka runbook](docs/local-run-kafka.md)
-- [RabbitMQ migration and rollback](docs/rabbitmq-to-kafka-migration.md)
-- [Service workspace](services/README.md)

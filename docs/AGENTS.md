@@ -1,34 +1,40 @@
-# Agent Instructions
+# Repository Development Guide
 
-This project is a Spring Boot microservices notification platform.
+## Boundaries
 
-## Important rules
+- `notification-api-service` owns HTTP intake, admission control, Kafka publication, and short-lived Redis acceptance state. It does not own notification tables.
+- `notification-orchestrator-service` owns workflow state, reference projections, and its transactional Kafka outbox.
+- `notification-projection-service` owns the query model.
+- Template, preference, and worker services own only their respective PostgreSQL schemas.
+- Never add cross-schema reads or writes. Communicate through the documented Kafka contracts or public HTTP APIs.
 
-- Work in small, reviewable steps.
-- Keep service ownership explicit.
-- Use PostgreSQL-owned schemas for local development.
-- Use Redis only for cache, rate-limit, and idempotency acceleration.
-- Use the outbox pattern for reliable queue publishing.
-- Add tests for service logic.
-- Add Flyway migrations for schema changes.
-- Keep business logic out of controllers.
+## Persistence and events
 
-## Backend stack
+- Add forward-only Flyway migrations for schema changes; never edit an applied migration.
+- Keep event DTOs in `shared-event-contracts` and increment schema versions deliberately.
+- Preserve stable partition keys and idempotency identifiers.
+- PostgreSQL is durable state; Redis is an accelerator and must not be the only permanent record.
+- Use a service-owned transactional outbox whenever one transaction must change database state and publish an event.
 
-- Java 21
-- Spring Boot
-- PostgreSQL
-- Flyway
-- JDBC
-- RabbitMQ
-- Validation
-- Docker Compose
+## Delivery
 
-## Architecture principles
+- Put provider behavior behind the channel adapter.
+- Assume at-least-once delivery and make duplicate handling explicit.
+- Use `worker-kafka-support` for retry, DLQ, concurrency, rate limiting, result publication, and processed-event coordination.
 
-- Notification API owns notification request state and outbox writes.
-- Template service owns template rendering and validation.
-- Preference service owns user/product/channel choices.
-- Outbox publisher owns polling and broker publishing.
-- Workers own provider calls, idempotency, and delivery attempts.
-- Provider-specific logic must be hidden behind adapters.
+## Verification
+
+Before merging backend changes, run:
+
+```bash
+mvn -f services/pom.xml test
+mvn -f services/pom.xml package -DskipTests
+```
+
+For frontend or deployment changes, also run:
+
+```bash
+npm --prefix frontend run lint
+npm --prefix frontend run build
+docker compose config
+```

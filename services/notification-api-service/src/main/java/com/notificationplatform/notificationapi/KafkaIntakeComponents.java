@@ -69,10 +69,6 @@ class NotificationIntakeProperties {
     private int maxConcurrentRequests = 1000;
     @Min(1024)
     private long maxRequestBytes = 262_144;
-    @Min(1)
-    private int maxRecipientsPerRequest = 1000;
-    @Min(1)
-    private int maxChannelsPerRequest = 5;
     @NotNull
     private Duration kafkaPublishTimeout = Duration.ofSeconds(3);
     @NotNull
@@ -86,29 +82,10 @@ class NotificationIntakeProperties {
     public void setMaxConcurrentRequests(int value) { maxConcurrentRequests = value; }
     public long getMaxRequestBytes() { return maxRequestBytes; }
     public void setMaxRequestBytes(long value) { maxRequestBytes = value; }
-    public int getMaxRecipientsPerRequest() { return maxRecipientsPerRequest; }
-    public void setMaxRecipientsPerRequest(int value) { maxRecipientsPerRequest = value; }
-    public int getMaxChannelsPerRequest() { return maxChannelsPerRequest; }
-    public void setMaxChannelsPerRequest(int value) { maxChannelsPerRequest = value; }
     public Duration getKafkaPublishTimeout() { return kafkaPublishTimeout; }
     public void setKafkaPublishTimeout(Duration value) { kafkaPublishTimeout = value; }
     public Duration getAcceptanceTtl() { return acceptanceTtl; }
     public void setAcceptanceTtl(Duration value) { acceptanceTtl = value; }
-}
-
-@ConfigurationProperties("notification.broker")
-class NotificationBrokerProperties {
-    private String intake = "kafka";
-    private String delivery = "rabbitmq";
-
-    public String getIntake() { return intake; }
-    public void setIntake(String value) { intake = value; }
-    public String getDelivery() { return delivery; }
-    public void setDelivery(String value) { delivery = value; }
-
-    boolean kafkaIntake() {
-        return "kafka".equalsIgnoreCase(intake);
-    }
 }
 
 @ConfigurationProperties("notification.kafka.topics")
@@ -120,38 +97,28 @@ class NotificationKafkaTopics {
 }
 
 @Service
-class NotificationIntakeRouter {
-    private final NotificationApiServiceApplication.NotificationSubmissionService legacyService;
+class NotificationIntakeService {
     private final KafkaNotificationIntakeService kafkaService;
-    private final NotificationBrokerProperties brokerProperties;
     private final RedisAdmissionControl admissionControl;
     private final MeterRegistry meterRegistry;
 
-    NotificationIntakeRouter(
-            NotificationApiServiceApplication.NotificationSubmissionService legacyService,
+    NotificationIntakeService(
             KafkaNotificationIntakeService kafkaService,
-            NotificationBrokerProperties brokerProperties,
             RedisAdmissionControl admissionControl,
             MeterRegistry meterRegistry) {
-        this.legacyService = legacyService;
         this.kafkaService = kafkaService;
-        this.brokerProperties = brokerProperties;
         this.admissionControl = admissionControl;
         this.meterRegistry = meterRegistry;
     }
 
     NotificationApiServiceApplication.NotificationAccepted submit(
             NotificationApiServiceApplication.NotificationRequest request, String correlationId) {
-        String mode = brokerProperties.kafkaIntake() ? "kafka" : "legacy";
         String tenantId = tenantId(request);
-        meterRegistry.counter("notification_intake_requests_total", "mode", mode).increment();
+        meterRegistry.counter("notification_intake_requests_total").increment();
         try {
             NotificationApiServiceApplication.NotificationAccepted accepted = admissionControl.execute(
-                    tenantId,
-                    () -> brokerProperties.kafkaIntake()
-                            ? kafkaService.submit(request, correlationId, tenantId)
-                            : legacyService.submit(request, correlationId));
-            meterRegistry.counter("notification_intake_accepted_total", "mode", mode).increment();
+                    tenantId, () -> kafkaService.submit(request, correlationId, tenantId));
+            meterRegistry.counter("notification_intake_accepted_total").increment();
             meterRegistry.counter(
                     "notification_intake_accepted_by_tenant_total",
                     "tenant_bucket", tenantBucket(tenantId)).increment();
@@ -214,7 +181,6 @@ class KafkaNotificationIntakeService {
             NotificationApiServiceApplication.NotificationRequest request,
             String correlationId,
             String tenantId) {
-        validateFanOutLimits();
         Optional<NotificationApiServiceApplication.NotificationAccepted> duplicate =
                 acceptanceCache.findByIdempotency(tenantId, request.idempotencyKey());
         if (duplicate.isPresent()) {
@@ -240,7 +206,7 @@ class KafkaNotificationIntakeService {
                 request.variables(),
                 acceptedAt,
                 1);
-        String partitionKey = NotificationIntakeRouter.partitionKey(tenantId, request.userId());
+        String partitionKey = NotificationIntakeService.partitionKey(tenantId, request.userId());
 
         Timer.Sample sample = Timer.start(meterRegistry);
         long deadlineNanos = System.nanoTime() + properties.getKafkaPublishTimeout().toNanos();
@@ -271,7 +237,7 @@ class KafkaNotificationIntakeService {
 
         NotificationApiServiceApplication.NotificationAccepted accepted =
                 new NotificationApiServiceApplication.NotificationAccepted(
-                        notificationId, requestId, "ACCEPTED", acceptedAt, correlationId, channel, null);
+                        notificationId, requestId, "ACCEPTED", acceptedAt, correlationId, channel);
         try {
             acceptanceCache.store(tenantId, request.idempotencyKey(), accepted);
         } catch (AdmissionControlUnavailableException exception) {
@@ -279,14 +245,6 @@ class KafkaNotificationIntakeService {
             meterRegistry.counter("notification_intake_acceptance_cache_failures_total").increment();
         }
         return accepted;
-    }
-
-    private void validateFanOutLimits() {
-        // The current public contract is one recipient and one channel. These checks keep limits explicit while
-        // preserving that contract; multi-recipient fan-out belongs in the orchestrator migration.
-        if (properties.getMaxRecipientsPerRequest() < 1 || properties.getMaxChannelsPerRequest() < 1) {
-            throw new IntakeCapacityExceededException("The configured recipient or channel limit rejects this request");
-        }
     }
 
     private NotificationRequested.Recipient recipient(
@@ -444,15 +402,12 @@ final class RedisAdmissionControlKey {
 
 @Service
 class NotificationStatusLookupService {
-    private final NotificationApiServiceApplication.NotificationRepository repository;
     private final AcceptanceCache acceptanceCache;
-    private final ProjectionStatusClient projectionClient;
+    private final NotificationProjectionClient projectionClient;
 
     NotificationStatusLookupService(
-            NotificationApiServiceApplication.NotificationRepository repository,
             AcceptanceCache acceptanceCache,
-            ProjectionStatusClient projectionClient) {
-        this.repository = repository;
+            NotificationProjectionClient projectionClient) {
         this.acceptanceCache = acceptanceCache;
         this.projectionClient = projectionClient;
     }
@@ -464,12 +419,6 @@ class NotificationStatusLookupService {
             return new NotificationApiServiceApplication.NotificationStatus(
                     notificationId, status.status(), null, status.updatedAt());
         }
-        Optional<NotificationApiServiceApplication.NotificationRecord> projection = repository.findOptionalById(notificationId);
-        if (projection.isPresent()) {
-            NotificationApiServiceApplication.NotificationRecord record = projection.get();
-            return new NotificationApiServiceApplication.NotificationStatus(
-                    record.id(), record.status(), record.channel(), record.updatedAt());
-        }
         return acceptanceCache.find(notificationId)
                 .map(accepted -> new NotificationApiServiceApplication.NotificationStatus(
                         accepted.notificationId(), accepted.status(), accepted.channel(), accepted.acceptedAt()))
@@ -479,9 +428,9 @@ class NotificationStatusLookupService {
 }
 
 @Service
-class ProjectionStatusClient {
+class NotificationProjectionClient {
     private final RestClient client;
-    ProjectionStatusClient(RestClient.Builder builder,
+    NotificationProjectionClient(RestClient.Builder builder,
             @org.springframework.beans.factory.annotation.Value("${NOTIFICATION_PROJECTION_URL:http://localhost:8092}") String url) {
         this.client = builder.clone().baseUrl(url).build();
     }
@@ -491,9 +440,7 @@ class ProjectionStatusClient {
                     .retrieve().body(ProjectionStatus.class));
         } catch (RestClientResponseException exception) {
             if (exception.getStatusCode().value() == 404) return Optional.empty();
-            return Optional.empty();
-        } catch (RuntimeException exception) {
-            return Optional.empty();
+            throw exception;
         }
     }
 
@@ -506,29 +453,27 @@ class ProjectionStatusClient {
     }
 
     Object notifications(String productId,String status,String channel,int page,int size,boolean itemsOnly) {
-        try {
-            Object response=client.get().uri(uri->uri.path("/projections/notifications")
-                    .queryParam("page",page).queryParam("size",size)
-                    .queryParamIfPresent("productId",Optional.ofNullable(productId))
-                    .queryParamIfPresent("status",Optional.ofNullable(status))
-                    .queryParamIfPresent("channel",Optional.ofNullable(channel)).build())
-                    .retrieve().body(Object.class);
-            if(itemsOnly&&response instanceof Map<?,?> result)return result.get("items");
-            return response;
-        } catch(RuntimeException exception){return null;}
+        Object response=client.get().uri(uri->uri.path("/projections/notifications")
+                .queryParam("page",page).queryParam("size",size)
+                .queryParamIfPresent("productId",Optional.ofNullable(productId))
+                .queryParamIfPresent("status",Optional.ofNullable(status))
+                .queryParamIfPresent("channel",Optional.ofNullable(channel)).build())
+                .retrieve().body(Object.class);
+        if(itemsOnly&&response instanceof Map<?,?> result)return result.get("items");
+        return response;
     }
 
     Object deliveries(UUID notificationId,String status,String channel,int page,int size) {
-        try{return client.get().uri(uri->uri.path("/projections/deliveries")
+        return client.get().uri(uri->uri.path("/projections/deliveries")
                 .queryParam("page",page).queryParam("size",size)
                 .queryParamIfPresent("notificationId",Optional.ofNullable(notificationId).map(UUID::toString))
                 .queryParamIfPresent("status",Optional.ofNullable(status))
                 .queryParamIfPresent("channel",Optional.ofNullable(channel)).build())
-                .retrieve().body(Object.class);}catch(RuntimeException exception){return null;}
+                .retrieve().body(Object.class);
     }
 
     private Object get(String path,Object... variables) {
-        try{return client.get().uri(path,variables).retrieve().body(Object.class);}catch(RuntimeException exception){return null;}
+        return client.get().uri(path,variables).retrieve().body(Object.class);
     }
 }
 

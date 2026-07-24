@@ -4,7 +4,6 @@ import { useDeliveries } from "../api/deliveries";
 import { useNotification } from "../api/notifications";
 import { Badge } from "../components/Badge";
 import { PaginatedDataTable } from "../components/DataTable";
-import { JsonPreview } from "../components/JsonPreview";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { ErrorBlock, LoadingBlock, StateBlock } from "../components/StateBlock";
@@ -45,18 +44,19 @@ export function NotificationDetailPage() {
         }
       />
 
-      <div className="grid gap-6 xl:grid-cols-[1fr_420px]">
+      <div className="grid gap-6">
         <div className="grid gap-6">
           <Panel title="Request">
             <dl className="grid gap-4 text-sm sm:grid-cols-2">
+              <Detail label="Product" value={notification.productId} />
               <Detail label="Template key" value={notification.templateKey} />
-              <Detail label="External user" value={notification.externalUserId} />
-              <Detail label="Category" value={notification.category} />
-              <Detail label="Priority" value={notification.priority} />
+              <Detail label="User" value={notification.userId} />
+              <Detail label="Channel" value={notification.channel} />
               <Detail label="Status" value={<Badge value={notification.status} tone={notification.status === "FAILED" ? "danger" : "neutral"} />} />
-              <Detail label="Created" value={formatDateTime(notification.createdAt)} />
-              <Detail label="Expires" value={formatDateTime(notification.expiresAt)} />
-              <Detail label="Requested channels" value={notification.requestedChannels.join(", ")} />
+              <Detail label="Requested" value={formatDateTime(notification.requestedAt)} />
+              <Detail label="Updated" value={formatDateTime(notification.updatedAt)} />
+              <Detail label="Reason code" value={notification.reasonCode ?? "None"} />
+              <Detail label="Reason" value={notification.reasonMessage ?? "None"} />
             </dl>
           </Panel>
 
@@ -70,7 +70,7 @@ export function NotificationDetailPage() {
             ) : null}
             {deliveriesQuery.data && totalDeliveries > 0 ? (
               <PaginatedDataTable
-                headers={["Channel", "Status", "Provider", "Attempts", "Last error"]}
+                headers={["Channel", "Status", "Provider", "Attempt", "Last error", "Updated"]}
                 rows={deliveries}
                 totalRows={totalDeliveries}
                 page={deliveriesPage}
@@ -85,8 +85,9 @@ export function NotificationDetailPage() {
                     <td className="px-4 py-3">{delivery.channel}</td>
                     <td className="px-4 py-3"><Badge value={delivery.status} /></td>
                     <td className="px-4 py-3">{delivery.provider ?? "Not set"}</td>
-                    <td className="px-4 py-3">{delivery.attemptCount}/{delivery.maxAttempts}</td>
-                    <td className="px-4 py-3 text-slate-600">{delivery.lastErrorMessage ?? "None"}</td>
+                    <td className="px-4 py-3">{delivery.attemptCount}</td>
+                    <td className="px-4 py-3 text-slate-600">{delivery.errorMessage ?? "None"}</td>
+                    <td className="px-4 py-3 text-slate-600">{formatDateTime(delivery.updatedAt)}</td>
                   </tr>
                 )}
               />
@@ -94,14 +95,6 @@ export function NotificationDetailPage() {
           </Panel>
         </div>
 
-        <div className="grid gap-6">
-          <Panel title="Recipient">
-            <JsonPreview value={notification.recipient} />
-          </Panel>
-          <Panel title="Payload">
-            <JsonPreview value={notification.payload} />
-          </Panel>
-        </div>
       </div>
     </>
   );

@@ -72,7 +72,7 @@ interface NotificationProjectionRepository {
     PageView<NotificationView> findAll(String tenantId,String productId,String status,String channel,int page,int size);
     PageView<NotificationView> findByUser(String tenantId,String userId,int page,int size);
     List<DeliveryView> findDeliveries(String notificationId);
-    List<DeliveryView> findDeliveries(String notificationId,String status,String channel,int page,int size);
+    PageView<DeliveryView> findDeliveries(String notificationId,String status,String channel,int page,int size);
     Map<String,Object> stats();
     void clearForRebuild();
 }
@@ -132,7 +132,7 @@ class PostgresNotificationProjectionRepository implements NotificationProjection
     @Override public PageView<NotificationView> findAll(String tenant,String product,String status,String channel,int page,int size){
         int limit=Math.max(1,Math.min(size,200));int offset=Math.max(0,page)*limit;
         String channelJson=channel==null?null:"[\""+channel.toUpperCase()+"\"]";
-        String where=" WHERE (? IS NULL OR tenant_id=?) AND (? IS NULL OR product_id=?) AND (? IS NULL OR status=?) AND (? IS NULL OR requested_channels @> ?::jsonb)";
+        String where=" WHERE (?::text IS NULL OR tenant_id=?) AND (?::text IS NULL OR product_id=?) AND (?::text IS NULL OR status=?) AND (?::jsonb IS NULL OR requested_channels @> ?::jsonb)";
         Long total=jdbc.queryForObject("SELECT count(*) FROM notifications"+where,Long.class,
                 tenant,tenant,product,product,status,status,channelJson,channelJson);
         List<NotificationView> items=jdbc.query("SELECT * FROM notifications"+where+" ORDER BY requested_at DESC NULLS LAST LIMIT ? OFFSET ?",
@@ -141,7 +141,7 @@ class PostgresNotificationProjectionRepository implements NotificationProjection
     }
     @Override public PageView<NotificationView> findByUser(String tenant,String user,int page,int size){
         int limit=Math.max(1,Math.min(size,200));int offset=Math.max(0,page)*limit;
-        String where=" WHERE (? IS NULL OR tenant_id=?) AND user_id=?";
+        String where=" WHERE (?::text IS NULL OR tenant_id=?) AND user_id=?";
         Long total=jdbc.queryForObject("SELECT count(*) FROM notifications"+where,Long.class,tenant,tenant,user);
         List<NotificationView> items=jdbc.query("SELECT * FROM notifications"+where+" ORDER BY requested_at DESC NULLS LAST LIMIT ? OFFSET ?",
                 this::mapNotification,tenant,tenant,user,limit,offset);
@@ -150,23 +150,25 @@ class PostgresNotificationProjectionRepository implements NotificationProjection
     @Override public List<DeliveryView> findDeliveries(String id){
         return jdbc.query("SELECT * FROM deliveries WHERE notification_id=? ORDER BY updated_at DESC",this::mapDelivery,id);
     }
-    @Override public List<DeliveryView> findDeliveries(String notificationId,String status,String channel,int page,int size){
+    @Override public PageView<DeliveryView> findDeliveries(String notificationId,String status,String channel,int page,int size){
         int limit=Math.max(1,Math.min(size,200));int offset=Math.max(0,page)*limit;
-        return jdbc.query("""
-            SELECT * FROM deliveries WHERE (? IS NULL OR notification_id=?) AND (? IS NULL OR status=?)
-              AND (? IS NULL OR channel=?) ORDER BY updated_at DESC LIMIT ? OFFSET ?
-            """,this::mapDelivery,notificationId,notificationId,status,status,channel,channel,limit,offset);
+        String where=" WHERE (?::text IS NULL OR notification_id=?) AND (?::text IS NULL OR status=?) AND (?::text IS NULL OR channel=?)";
+        Long total=jdbc.queryForObject("SELECT count(*) FROM deliveries"+where,Long.class,
+                notificationId,notificationId,status,status,channel,channel);
+        List<DeliveryView> items=jdbc.query("SELECT * FROM deliveries"+where+" ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+                this::mapDelivery,notificationId,notificationId,status,status,channel,channel,limit,offset);
+        return new PageView<>(items,total==null?0:total,page,limit);
     }
     @Override public Map<String,Object> stats(){
         Map<String,Long> statuses=jdbc.query("SELECT status,count(*) FROM notifications GROUP BY status",rs->{
             Map<String,Long> result=new java.util.HashMap<>();while(rs.next())result.put(rs.getString(1),rs.getLong(2));return result;});
         Long today=jdbc.queryForObject("SELECT count(*) FROM notifications WHERE requested_at >= date_trunc('day',now())",Long.class);
         Long retries=jdbc.queryForObject("SELECT count(*) FROM delivery_attempts WHERE attempt > 1",Long.class);
-        long sent=statuses.getOrDefault("DELIVERED",0L)+statuses.getOrDefault("PARTIALLY_DELIVERED",0L);
-        long failed=statuses.getOrDefault("FAILED",0L);long completed=sent+failed;
-        return Map.of("totalNotificationsToday",today==null?0:today,"sentCount",sent,"failedCount",failed,
-                "pendingOutboxCount",0,"retryCount",retries==null?0:retries,"dlqCount",0,
-                "providerErrorRate",completed==0?0.0:(double)failed/completed,"throughputPerMinute",0.0);
+        long delivered=statuses.getOrDefault("DELIVERED",0L)+statuses.getOrDefault("PARTIALLY_DELIVERED",0L);
+        long failed=statuses.getOrDefault("FAILED",0L);long completed=delivered+failed;
+        return Map.of("totalNotificationsToday",today==null?0:today,"deliveredCount",delivered,"failedCount",failed,
+                "retryAttemptCount",retries==null?0:retries,
+                "providerErrorRate",completed==0?0.0:(double)failed/completed);
     }
     @Override @Transactional public void clearForRebuild(){
         jdbc.execute("TRUNCATE delivery_attempts,deliveries,notifications,processed_events");
@@ -223,10 +225,11 @@ class ProjectionController {
 class DeliveryProjectionController {
     private final NotificationProjectionRepository repository;
     DeliveryProjectionController(NotificationProjectionRepository repository){this.repository=repository;}
-    @GetMapping List<DeliveryView> list(@RequestParam(required=false)String notificationId,
+    @GetMapping DeliveryPage list(@RequestParam(required=false)String notificationId,
             @RequestParam(required=false)String status,@RequestParam(required=false)String channel,
             @RequestParam(defaultValue="0")int page,@RequestParam(defaultValue="50")int size){
-        return repository.findDeliveries(notificationId,status,channel,page,size);
+        PageView<DeliveryView> result=repository.findDeliveries(notificationId,status,channel,page,size);
+        return new DeliveryPage(result.items(),result.total(),result.page(),result.size());
     }
 }
 
@@ -238,3 +241,4 @@ record DeliveryView(String deliveryId,String id,String notificationId,String not
         String destination,String status,int attempt,int attemptCount,String providerMessageId,String errorCode,String errorMessage,Instant updatedAt){}
 record PageView<T>(List<T> items,long total,int page,int size){}
 record NotificationPage(List<NotificationView> items,long total,int page,int size){}
+record DeliveryPage(List<DeliveryView> items,long total,int page,int size){}

@@ -1,5 +1,6 @@
 package com.notificationplatform.webhookworker;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import jakarta.servlet.http.HttpServletRequest;
@@ -17,13 +18,6 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import org.springframework.amqp.core.Binding;
-import org.springframework.amqp.core.BindingBuilder;
-import org.springframework.amqp.core.DirectExchange;
-import org.springframework.amqp.core.Queue;
-import org.springframework.messaging.handler.annotation.Header;
-import org.springframework.amqp.rabbit.annotation.RabbitListener;
-import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -43,35 +37,12 @@ import org.springframework.web.bind.annotation.RestController;
 @SpringBootApplication
 public class WebhookWorkerServiceApplication {
 
-    static final String DELIVERY_EXCHANGE = "notification.delivery";
-    static final String WEBHOOK_QUEUE = "delivery.webhook";
-
     public static void main(String[] args) {
         SpringApplication.run(WebhookWorkerServiceApplication.class, args);
     }
 
     private static java.sql.Timestamp ts(Instant instant) {
         return instant == null ? null : java.sql.Timestamp.from(instant);
-    }
-
-    @Bean
-    Jackson2JsonMessageConverter jackson2JsonMessageConverter(com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
-        return new Jackson2JsonMessageConverter(objectMapper);
-    }
-
-    @Bean
-    DirectExchange deliveryExchange() {
-        return new DirectExchange(DELIVERY_EXCHANGE, true, false);
-    }
-
-    @Bean
-    Queue webhookQueue() {
-        return new Queue(WEBHOOK_QUEUE, true);
-    }
-
-    @Bean
-    Binding webhookBinding(Queue webhookQueue, DirectExchange deliveryExchange) {
-        return BindingBuilder.bind(webhookQueue).to(deliveryExchange).with("WEBHOOK");
     }
 
     @RestController
@@ -137,22 +108,21 @@ public class WebhookWorkerServiceApplication {
     }
 
     @org.springframework.stereotype.Component
-    static class WebhookDeliveryConsumer {
+    static class WebhookDeliveryProcessor {
         private final WebhookDeliveryRepository repository;
         private final WebhookProvider provider;
         private final MeterRegistry meterRegistry;
 
-        WebhookDeliveryConsumer(WebhookDeliveryRepository repository, WebhookProvider provider, MeterRegistry meterRegistry) {
+        WebhookDeliveryProcessor(WebhookDeliveryRepository repository, WebhookProvider provider, MeterRegistry meterRegistry) {
             this.repository = repository;
             this.provider = provider;
             this.meterRegistry = meterRegistry;
         }
 
-        @RabbitListener(queues = WEBHOOK_QUEUE)
-        void consume(DeliveryJob job, @Header(name = "X-Correlation-Id", required = false) String correlationId) {
+        void process(DeliveryJob job) {
             Timer.Sample processingTimer = Timer.start(meterRegistry);
             meterRegistry.counter("worker_messages_consumed_total", "service", "webhook-worker-service", "channel", "WEBHOOK").increment();
-            putContext(job, correlationId);
+            putContext(job);
             try {
                 if (!repository.markProcessing(job.eventId())) {
                     meterRegistry.counter("worker_duplicate_events_skipped_total", "service", "webhook-worker-service", "channel", "WEBHOOK").increment();
@@ -163,7 +133,7 @@ public class WebhookWorkerServiceApplication {
                         .tag("provider", "test-webhook")
                         .register(meterRegistry)
                         .record(() -> provider.sendWebhook(new SendWebhookCommand(
-                                job.destination(), "POST", Map.of("x-correlation-id", effectiveCorrelationId(job, correlationId)), job.body(),
+                                job.destination(), "POST", Map.of(), job.body(),
                                 job.deliveryId().toString(), job.notificationId().toString())));
                 repository.saveAttempt(job, result);
                 meterRegistry.counter("webhook_request_total", "status", result.status()).increment();
@@ -185,18 +155,7 @@ public class WebhookWorkerServiceApplication {
             }
         }
 
-        private String effectiveCorrelationId(DeliveryJob job, String correlationId) {
-            if (correlationId != null && !correlationId.isBlank()) {
-                return correlationId;
-            }
-            return job.correlationId() == null ? "" : job.correlationId();
-        }
-
-        private void putContext(DeliveryJob job, String correlationId) {
-            String effectiveCorrelationId = effectiveCorrelationId(job, correlationId);
-            if (!effectiveCorrelationId.isBlank()) {
-                MDC.put("correlationId", effectiveCorrelationId);
-            }
+        private void putContext(DeliveryJob job) {
             MDC.put("eventId", String.valueOf(job.eventId()));
             MDC.put("notificationId", String.valueOf(job.notificationId()));
             MDC.put("channel", "WEBHOOK");
@@ -230,12 +189,9 @@ public class WebhookWorkerServiceApplication {
             UUID eventId,
             UUID notificationId,
             UUID deliveryId,
-            String channel,
             String destination,
             String subject,
-            String body,
-            String priority,
-            String correlationId) {
+            String body) {
     }
 
     record SendWebhookCommand(@NotBlank String url, String method, Map<String, String> headers, String body, String eventId, String notificationId) {
@@ -319,7 +275,7 @@ public class WebhookWorkerServiceApplication {
 
         private Map<String, String> readHeaders(String json) {
             try {
-                return objectMapper.readValue(json, Map.class);
+                return objectMapper.readValue(json, new TypeReference<>() {});
             } catch (Exception exception) {
                 throw new IllegalStateException("Could not read webhook headers", exception);
             }
@@ -365,24 +321,6 @@ public class WebhookWorkerServiceApplication {
                     UUID.randomUUID(), job.eventId(), job.notificationId(), job.deliveryId(), job.destination(),
                     result.provider(), result.providerMessageId(), result.status(), "{\"response\":\"" + result.rawResponse() + "\"}",
                     result.errorCode(), result.errorMessage(), ts(result.sentAt()), ts(now));
-            updateNotificationStatus(job, result, now);
-        }
-
-        private void updateNotificationStatus(DeliveryJob job, ProviderResult result, Instant now) {
-            jdbc.update("""
-                    UPDATE notification_api.notification_deliveries
-                    SET status = ?, attempt_count = attempt_count + 1, updated_at = ?
-                    WHERE id = ?
-                    """, result.status(), ts(now), job.deliveryId());
-            jdbc.update("""
-                    UPDATE notification_api.notifications
-                    SET status = ?, updated_at = ?
-                    WHERE id = ?
-                    """, notificationStatus(result.status()), ts(now), job.notificationId());
-        }
-
-        private String notificationStatus(String deliveryStatus) {
-            return "SENT".equals(deliveryStatus) ? "SENT" : "FAILED";
         }
     }
 

@@ -11,34 +11,25 @@ metadata:
 data:
   POSTGRES_HOST: postgres
   POSTGRES_DB: notification_platform
-  RABBITMQ_HOST: rabbitmq
   REDIS_HOST: redis
   SPRING_DATA_REDIS_HOST: redis
   SPRING_DATA_REDIS_PORT: "6379"
   SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka-kafka-bootstrap.kafka.svc:9092
-  NOTIFICATION_BROKER_INTAKE: kafka
-  NOTIFICATION_BROKER_DELIVERY: kafka
   NOTIFICATION_KAFKA_TOPICS_REQUESTS: notification.requests.v1
   NOTIFICATION_INTAKE_GLOBAL_RATE_PER_SECOND: "5000"
   NOTIFICATION_INTAKE_PER_TENANT_RATE_PER_SECOND: "500"
   NOTIFICATION_INTAKE_MAX_CONCURRENT_REQUESTS: "1000"
   NOTIFICATION_INTAKE_MAX_REQUEST_BYTES: "262144"
-  NOTIFICATION_INTAKE_MAX_RECIPIENTS_PER_REQUEST: "1000"
-  NOTIFICATION_INTAKE_MAX_CHANNELS_PER_REQUEST: "5"
   NOTIFICATION_INTAKE_KAFKA_PUBLISH_TIMEOUT: 3s
   TEMPLATE_SERVICE_URL: http://template-service:8082
   PREFERENCE_SERVICE_URL: http://preference-service:8083
   NOTIFICATION_API_URL: http://notification-api-service:8081
   NOTIFICATION_PROJECTION_URL: http://notification-projection-service:8092
-  ORCHESTRATOR_REFERENCE_SYNC_FALLBACK_ENABLED: "true"
-  OUTBOX_PUBLISHER_SERVICE_URL: http://outbox-publisher-service:8084
   EMAIL_WORKER_SERVICE_URL: http://email-worker-service:8085
   SMS_WORKER_SERVICE_URL: http://sms-worker-service:8086
   PUSH_WORKER_SERVICE_URL: http://push-worker-service:8087
   IN_APP_WORKER_SERVICE_URL: http://in-app-worker-service:8089
   WEBHOOK_WORKER_SERVICE_URL: http://webhook-worker-service:8090
-  OUTBOX_BATCH_SIZE: "500"
-  OUTBOX_FIXED_DELAY_MS: "250"
   ENVIRONMENT: kubernetes
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector.observability:4318
   MANAGEMENT_OTLP_TRACING_ENDPOINT: http://otel-collector.observability:4318/v1/traces
@@ -57,8 +48,6 @@ type: Opaque
 stringData:
   POSTGRES_USER: notification
   POSTGRES_PASSWORD: notification
-  RABBITMQ_USER: notification
-  RABBITMQ_PASSWORD: notification
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -125,76 +114,6 @@ spec:
   ports:
     - port: 5432
       targetPort: 5432
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: rabbitmq
-  namespace: notification-platform
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: rabbitmq
-  template:
-    metadata:
-      labels:
-        app: rabbitmq
-    spec:
-      containers:
-        - name: rabbitmq
-          image: rabbitmq:4-management
-          ports:
-            - containerPort: 5672
-            - containerPort: 15672
-            - containerPort: 15692
-          env:
-            - name: RABBITMQ_DEFAULT_USER
-              valueFrom:
-                secretKeyRef:
-                  name: notification-platform-secrets
-                  key: RABBITMQ_USER
-            - name: RABBITMQ_DEFAULT_PASS
-              valueFrom:
-                secretKeyRef:
-                  name: notification-platform-secrets
-                  key: RABBITMQ_PASSWORD
-          readinessProbe:
-            exec:
-              command: ["rabbitmq-diagnostics", "ping"]
-            initialDelaySeconds: 20
-            periodSeconds: 10
-          livenessProbe:
-            exec:
-              command: ["rabbitmq-diagnostics", "ping"]
-            initialDelaySeconds: 40
-            periodSeconds: 20
-          resources:
-            requests:
-              cpu: 100m
-              memory: 512Mi
-            limits:
-              cpu: 1000m
-              memory: 1Gi
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: rabbitmq
-  namespace: notification-platform
-spec:
-  selector:
-    app: rabbitmq
-  ports:
-    - name: amqp
-      port: 5672
-      targetPort: 5672
-    - name: management
-      port: 15672
-      targetPort: 15672
-    - name: metrics
-      port: 15692
-      targetPort: 15692
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -357,38 +276,6 @@ spec:
                 configMapKeyRef:
                   name: notification-platform-config
                   key: MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED
-            - name: SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE
-              valueFrom:
-                configMapKeyRef:
-                  name: notification-platform-config
-                  key: SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE
-            - name: SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE
-              valueFrom:
-                configMapKeyRef:
-                  name: notification-platform-config
-                  key: SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE
-            - name: SPRING_DATASOURCE_URL
-              value: jdbc:postgresql://postgres:5432/notification_platform?currentSchema=notification_api
-            - name: SPRING_DATASOURCE_USERNAME
-              valueFrom:
-                secretKeyRef:
-                  name: notification-platform-secrets
-                  key: POSTGRES_USER
-            - name: SPRING_DATASOURCE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: notification-platform-secrets
-                  key: POSTGRES_PASSWORD
-            - name: TEMPLATE_SERVICE_URL
-              valueFrom:
-                configMapKeyRef:
-                  name: notification-platform-config
-                  key: TEMPLATE_SERVICE_URL
-            - name: PREFERENCE_SERVICE_URL
-              valueFrom:
-                configMapKeyRef:
-                  name: notification-platform-config
-                  key: PREFERENCE_SERVICE_URL
             - name: SPRING_DATA_REDIS_HOST
               valueFrom:
                 configMapKeyRef:
@@ -404,16 +291,6 @@ spec:
                 configMapKeyRef:
                   name: notification-platform-config
                   key: SPRING_KAFKA_BOOTSTRAP_SERVERS
-            - name: NOTIFICATION_BROKER_INTAKE
-              valueFrom:
-                configMapKeyRef:
-                  name: notification-platform-config
-                  key: NOTIFICATION_BROKER_INTAKE
-            - name: NOTIFICATION_BROKER_DELIVERY
-              valueFrom:
-                configMapKeyRef:
-                  name: notification-platform-config
-                  key: NOTIFICATION_BROKER_DELIVERY
             - name: NOTIFICATION_KAFKA_TOPICS_REQUESTS
               valueFrom:
                 configMapKeyRef:
@@ -439,16 +316,6 @@ spec:
                 configMapKeyRef:
                   name: notification-platform-config
                   key: NOTIFICATION_INTAKE_MAX_REQUEST_BYTES
-            - name: NOTIFICATION_INTAKE_MAX_RECIPIENTS_PER_REQUEST
-              valueFrom:
-                configMapKeyRef:
-                  name: notification-platform-config
-                  key: NOTIFICATION_INTAKE_MAX_RECIPIENTS_PER_REQUEST
-            - name: NOTIFICATION_INTAKE_MAX_CHANNELS_PER_REQUEST
-              valueFrom:
-                configMapKeyRef:
-                  name: notification-platform-config
-                  key: NOTIFICATION_INTAKE_MAX_CHANNELS_PER_REQUEST
             - name: NOTIFICATION_INTAKE_KAFKA_PUBLISH_TIMEOUT
               valueFrom:
                 configMapKeyRef:
@@ -796,157 +663,6 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: outbox-publisher-service
-  namespace: notification-platform
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: outbox-publisher-service
-  template:
-    metadata:
-      labels:
-        app: outbox-publisher-service
-      annotations:
-        prometheus.io/scrape: "true"
-        prometheus.io/path: "/actuator/prometheus"
-        prometheus.io/port: "8084"
-    spec:
-      containers:
-        - name: outbox-publisher-service
-          image: notification-platform/outbox-publisher-service:local
-          imagePullPolicy: IfNotPresent
-          ports:
-            - containerPort: 8084
-          env:
-            - name: SERVER_PORT
-              value: "8084"
-            - name: SERVICE_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.labels['app']
-            - name: ENVIRONMENT
-              valueFrom:
-                configMapKeyRef:
-                  name: notification-platform-config
-                  key: ENVIRONMENT
-            - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              valueFrom:
-                configMapKeyRef:
-                  name: notification-platform-config
-                  key: OTEL_EXPORTER_OTLP_ENDPOINT
-            - name: MANAGEMENT_OTLP_TRACING_ENDPOINT
-              valueFrom:
-                configMapKeyRef:
-                  name: notification-platform-config
-                  key: MANAGEMENT_OTLP_TRACING_ENDPOINT
-            - name: MANAGEMENT_TRACING_SAMPLING_PROBABILITY
-              valueFrom:
-                configMapKeyRef:
-                  name: notification-platform-config
-                  key: MANAGEMENT_TRACING_SAMPLING_PROBABILITY
-            - name: MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE
-              valueFrom:
-                configMapKeyRef:
-                  name: notification-platform-config
-                  key: MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE
-            - name: MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED
-              valueFrom:
-                configMapKeyRef:
-                  name: notification-platform-config
-                  key: MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED
-            - name: SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE
-              valueFrom:
-                configMapKeyRef:
-                  name: notification-platform-config
-                  key: SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE
-            - name: SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE
-              valueFrom:
-                configMapKeyRef:
-                  name: notification-platform-config
-                  key: SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE
-            - name: SPRING_DATASOURCE_URL
-              value: jdbc:postgresql://postgres:5432/notification_platform?currentSchema=notification_api
-            - name: SPRING_DATASOURCE_USERNAME
-              valueFrom:
-                secretKeyRef:
-                  name: notification-platform-secrets
-                  key: POSTGRES_USER
-            - name: SPRING_DATASOURCE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: notification-platform-secrets
-                  key: POSTGRES_PASSWORD
-            - name: SPRING_RABBITMQ_HOST
-              valueFrom:
-                configMapKeyRef:
-                  name: notification-platform-config
-                  key: RABBITMQ_HOST
-            - name: SPRING_RABBITMQ_USERNAME
-              valueFrom:
-                secretKeyRef:
-                  name: notification-platform-secrets
-                  key: RABBITMQ_USER
-            - name: SPRING_RABBITMQ_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: notification-platform-secrets
-                  key: RABBITMQ_PASSWORD
-          readinessProbe:
-            httpGet:
-              path: /actuator/health/readiness
-              port: 8084
-            initialDelaySeconds: 20
-            periodSeconds: 10
-          livenessProbe:
-            httpGet:
-              path: /actuator/health/liveness
-              port: 8084
-            initialDelaySeconds: 40
-            periodSeconds: 20
-          resources:
-            requests:
-              cpu: 100m
-              memory: 256Mi
-            limits:
-              cpu: 1000m
-              memory: 768Mi
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: outbox-publisher-service
-  namespace: notification-platform
-spec:
-  selector:
-    app: outbox-publisher-service
-  ports:
-    - port: 8084
-      targetPort: 8084
----
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: outbox-publisher-service
-  namespace: notification-platform
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: outbox-publisher-service
-  minReplicas: 1
-  maxReplicas: 6
-  metrics:
-    - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: 70
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
   name: email-worker-service
   namespace: notification-platform
 spec:
@@ -1033,21 +749,6 @@ spec:
                 secretKeyRef:
                   name: notification-platform-secrets
                   key: POSTGRES_PASSWORD
-            - name: SPRING_RABBITMQ_HOST
-              valueFrom:
-                configMapKeyRef:
-                  name: notification-platform-config
-                  key: RABBITMQ_HOST
-            - name: SPRING_RABBITMQ_USERNAME
-              valueFrom:
-                secretKeyRef:
-                  name: notification-platform-secrets
-                  key: RABBITMQ_USER
-            - name: SPRING_RABBITMQ_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: notification-platform-secrets
-                  key: RABBITMQ_PASSWORD
             - name: EMAIL_PROVIDER
               value: smtp
             - name: SPRING_MAIL_HOST
@@ -1175,21 +876,6 @@ spec:
                 secretKeyRef:
                   name: notification-platform-secrets
                   key: POSTGRES_PASSWORD
-            - name: SPRING_RABBITMQ_HOST
-              valueFrom:
-                configMapKeyRef:
-                  name: notification-platform-config
-                  key: RABBITMQ_HOST
-            - name: SPRING_RABBITMQ_USERNAME
-              valueFrom:
-                secretKeyRef:
-                  name: notification-platform-secrets
-                  key: RABBITMQ_USER
-            - name: SPRING_RABBITMQ_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: notification-platform-secrets
-                  key: RABBITMQ_PASSWORD
           readinessProbe:
             httpGet:
               path: /actuator/health/readiness
@@ -1311,21 +997,6 @@ spec:
                 secretKeyRef:
                   name: notification-platform-secrets
                   key: POSTGRES_PASSWORD
-            - name: SPRING_RABBITMQ_HOST
-              valueFrom:
-                configMapKeyRef:
-                  name: notification-platform-config
-                  key: RABBITMQ_HOST
-            - name: SPRING_RABBITMQ_USERNAME
-              valueFrom:
-                secretKeyRef:
-                  name: notification-platform-secrets
-                  key: RABBITMQ_USER
-            - name: SPRING_RABBITMQ_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: notification-platform-secrets
-                  key: RABBITMQ_PASSWORD
           readinessProbe:
             httpGet:
               path: /actuator/health/readiness
@@ -1450,21 +1121,6 @@ spec:
                 secretKeyRef:
                   name: notification-platform-secrets
                   key: POSTGRES_PASSWORD
-            - name: SPRING_RABBITMQ_HOST
-              valueFrom:
-                configMapKeyRef:
-                  name: notification-platform-config
-                  key: RABBITMQ_HOST
-            - name: SPRING_RABBITMQ_USERNAME
-              valueFrom:
-                secretKeyRef:
-                  name: notification-platform-secrets
-                  key: RABBITMQ_USER
-            - name: SPRING_RABBITMQ_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: notification-platform-secrets
-                  key: RABBITMQ_PASSWORD
             - name: IN_APP_PROVIDER
               value: db
           readinessProbe:
@@ -1591,21 +1247,6 @@ spec:
                 secretKeyRef:
                   name: notification-platform-secrets
                   key: POSTGRES_PASSWORD
-            - name: SPRING_RABBITMQ_HOST
-              valueFrom:
-                configMapKeyRef:
-                  name: notification-platform-config
-                  key: RABBITMQ_HOST
-            - name: SPRING_RABBITMQ_USERNAME
-              valueFrom:
-                secretKeyRef:
-                  name: notification-platform-secrets
-                  key: RABBITMQ_USER
-            - name: SPRING_RABBITMQ_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: notification-platform-secrets
-                  key: RABBITMQ_PASSWORD
             - name: WEBHOOK_PROVIDER
               value: test
           readinessProbe:
@@ -1732,11 +1373,6 @@ spec:
                 configMapKeyRef:
                   name: notification-platform-config
                   key: PREFERENCE_SERVICE_URL
-            - name: OUTBOX_PUBLISHER_SERVICE_URL
-              valueFrom:
-                configMapKeyRef:
-                  name: notification-platform-config
-                  key: OUTBOX_PUBLISHER_SERVICE_URL
             - name: EMAIL_WORKER_SERVICE_URL
               valueFrom:
                 configMapKeyRef:

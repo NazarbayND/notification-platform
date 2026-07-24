@@ -12,13 +12,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
-import org.springframework.amqp.core.Binding;
-import org.springframework.amqp.core.BindingBuilder;
-import org.springframework.amqp.core.DirectExchange;
-import org.springframework.amqp.core.Queue;
-import org.springframework.messaging.handler.annotation.Header;
-import org.springframework.amqp.rabbit.annotation.RabbitListener;
-import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -41,35 +34,12 @@ import org.slf4j.MDC;
 @SpringBootApplication
 public class SmsWorkerServiceApplication {
 
-    static final String DELIVERY_EXCHANGE = "notification.delivery";
-    static final String SMS_QUEUE = "delivery.sms";
-
     public static void main(String[] args) {
         SpringApplication.run(SmsWorkerServiceApplication.class, args);
     }
 
     private static java.sql.Timestamp ts(Instant instant) {
         return instant == null ? null : java.sql.Timestamp.from(instant);
-    }
-
-    @Bean
-    Jackson2JsonMessageConverter jackson2JsonMessageConverter(ObjectMapper objectMapper) {
-        return new Jackson2JsonMessageConverter(objectMapper);
-    }
-
-    @Bean
-    DirectExchange deliveryExchange() {
-        return new DirectExchange(DELIVERY_EXCHANGE, true, false);
-    }
-
-    @Bean
-    Queue smsQueue() {
-        return new Queue(SMS_QUEUE, true);
-    }
-
-    @Bean
-    Binding smsBinding(Queue smsQueue, DirectExchange deliveryExchange) {
-        return BindingBuilder.bind(smsQueue).to(deliveryExchange).with("SMS");
     }
 
     @RestController
@@ -127,22 +97,21 @@ public class SmsWorkerServiceApplication {
     }
 
     @org.springframework.stereotype.Component
-    static class SmsDeliveryConsumer {
+    static class SmsDeliveryProcessor {
         private final DeliveryRepository repository;
         private final SmsProvider provider;
         private final MeterRegistry meterRegistry;
 
-        SmsDeliveryConsumer(DeliveryRepository repository, SmsProvider provider, MeterRegistry meterRegistry) {
+        SmsDeliveryProcessor(DeliveryRepository repository, SmsProvider provider, MeterRegistry meterRegistry) {
             this.repository = repository;
             this.provider = provider;
             this.meterRegistry = meterRegistry;
         }
 
-        @RabbitListener(queues = SMS_QUEUE)
-        void consume(DeliveryJob job, @Header(name = "X-Correlation-Id", required = false) String correlationId) {
+        void process(DeliveryJob job) {
             Timer.Sample processingTimer = Timer.start(meterRegistry);
             meterRegistry.counter("worker_messages_consumed_total", "service", "sms-worker-service", "channel", "SMS").increment();
-            putMdc(job, correlationId);
+            putMdc(job);
             try {
                 if (!repository.markProcessing(job.eventId())) {
                     meterRegistry.counter("worker_duplicate_events_skipped_total", "service", "sms-worker-service", "channel", "SMS").increment();
@@ -172,17 +141,13 @@ public class SmsWorkerServiceApplication {
             }
         }
 
-        private void putMdc(DeliveryJob job, String correlationId) {
-            if (correlationId != null && !correlationId.isBlank()) {
-                MDC.put("correlationId", correlationId);
-            }
+        private void putMdc(DeliveryJob job) {
             MDC.put("eventId", job.eventId().toString());
             MDC.put("notificationId", job.notificationId().toString());
             MDC.put("channel", "SMS");
         }
 
         private void clearMdc() {
-            MDC.remove("correlationId");
             MDC.remove("eventId");
             MDC.remove("notificationId");
             MDC.remove("channel");
@@ -226,24 +191,6 @@ public class SmsWorkerServiceApplication {
                     UUID.randomUUID(), job.eventId(), job.notificationId(), job.deliveryId(), job.destination(),
                     result.provider(), result.providerMessageId(), result.status(), writeJson(result.rawResponse()),
                     result.errorCode(), result.errorMessage(), ts(result.sentAt()), ts(now));
-            updateNotificationStatus(job, result, now);
-        }
-
-        private void updateNotificationStatus(DeliveryJob job, ProviderResult result, Instant now) {
-            jdbc.update("""
-                    UPDATE notification_api.notification_deliveries
-                    SET status = ?, attempt_count = attempt_count + 1, updated_at = ?
-                    WHERE id = ?
-                    """, result.status(), ts(now), job.deliveryId());
-            jdbc.update("""
-                    UPDATE notification_api.notifications
-                    SET status = ?, updated_at = ?
-                    WHERE id = ?
-                    """, notificationStatus(result.status()), ts(now), job.notificationId());
-        }
-
-        private String notificationStatus(String deliveryStatus) {
-            return "SENT".equals(deliveryStatus) ? "SENT" : "FAILED";
         }
 
         private String writeJson(Object value) {
@@ -283,12 +230,9 @@ public class SmsWorkerServiceApplication {
             UUID eventId,
             UUID notificationId,
             UUID deliveryId,
-            String channel,
             String destination,
             String subject,
-            String body,
-            String priority,
-            String correlationId) {
+            String body) {
     }
 
     record SendSmsCommand(@NotBlank String recipient, @NotBlank String body, String eventId, String notificationId) {

@@ -2,10 +2,7 @@ package com.notificationplatform.adminbff;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
-import java.time.Duration;
 import java.time.Instant;
-import java.time.LocalDate;
-import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -13,7 +10,6 @@ import java.util.Map;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -28,7 +24,7 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.server.ResponseStatusException;
 
-@SpringBootApplication(exclude = DataSourceAutoConfiguration.class)
+@SpringBootApplication
 public class AdminBffServiceApplication {
 
     public static void main(String[] args) {
@@ -65,46 +61,15 @@ public class AdminBffServiceApplication {
                                 .retrieve()
                                 .body(NotificationStats.class));
                         if (stats == null) {
-                            return new DashboardStats(0, 0, 0, 0, 0, 0, 0.0, 0.0);
+                            return new DashboardStats(0, 0, 0, 0, 0.0);
                         }
                         return new DashboardStats(
                                 stats.totalNotificationsToday(),
-                                stats.sentCount(),
+                                stats.deliveredCount(),
                                 stats.failedCount(),
-                                stats.pendingOutboxCount(),
-                                stats.retryCount(),
-                                stats.dlqCount(),
-                                stats.providerErrorRate(),
-                                stats.throughputPerMinute());
+                                stats.retryAttemptCount(),
+                                stats.providerErrorRate());
                     });
-        }
-
-        @GetMapping("/notifications")
-        List<Map<String, Object>> notifications(
-                @RequestParam(defaultValue = "0") int page,
-                @RequestParam(defaultValue = "50") int size,
-                @RequestParam(required = false) String productId,
-                @RequestParam(required = false) String status,
-                @RequestParam(required = false) String channel,
-                @RequestParam(required = false) String priority,
-                @RequestParam(required = false) String dateFrom,
-                @RequestParam(required = false) String dateTo) {
-            Object response = downstreamRequest("notification-projection-service", () -> downstream.projection.get()
-                    .uri(uri -> uri.path("/projections/notifications")
-                            .queryParam("page", page)
-                            .queryParam("size", size)
-                            .queryParamIfPresent("status", java.util.Optional.ofNullable(status))
-                            .queryParamIfPresent("channel", java.util.Optional.ofNullable(channel))
-                            .build())
-                    .retrieve()
-                    .body(Object.class));
-            Object notifications = response instanceof Map<?, ?> pageResult ? pageResult.get("items") : response;
-            return objectList(notifications).stream()
-                    .filter(item -> matches(item, "productId", productId))
-                    .filter(item -> matches(item, "priority", priority))
-                    .filter(item -> createdOnOrAfter(item, dateFrom))
-                    .filter(item -> createdOnOrBefore(item, dateTo))
-                    .toList();
         }
 
         @GetMapping("/notifications/page")
@@ -113,10 +78,7 @@ public class AdminBffServiceApplication {
                 @RequestParam(defaultValue = "50") int size,
                 @RequestParam(required = false) String productId,
                 @RequestParam(required = false) String status,
-                @RequestParam(required = false) String channel,
-                @RequestParam(required = false) String priority,
-                @RequestParam(required = false) String dateFrom,
-                @RequestParam(required = false) String dateTo) {
+                @RequestParam(required = false) String channel) {
             return downstreamRequest("notification-projection-service", () -> downstream.projection.get()
                     .uri(uri -> uri.path("/projections/notifications")
                             .queryParam("page", page)
@@ -124,9 +86,6 @@ public class AdminBffServiceApplication {
                             .queryParamIfPresent("productId", java.util.Optional.ofNullable(productId))
                             .queryParamIfPresent("status", java.util.Optional.ofNullable(status))
                             .queryParamIfPresent("channel", java.util.Optional.ofNullable(channel))
-                            .queryParamIfPresent("priority", java.util.Optional.ofNullable(priority))
-                            .queryParamIfPresent("dateFrom", java.util.Optional.ofNullable(dateFrom))
-                            .queryParamIfPresent("dateTo", java.util.Optional.ofNullable(dateTo))
                             .build())
                     .retrieve()
                     .body(Object.class));
@@ -148,26 +107,13 @@ public class AdminBffServiceApplication {
                     .uri("/projections/notifications/{id}/deliveries", id).retrieve().body(Object.class));
         }
 
-        @GetMapping("/deliveries")
-        Object deliveries(
-                @RequestParam(required = false) String status,
-                @RequestParam(required = false) String channel,
-                @RequestParam(required = false) String provider) {
-            return projectionDeliveries().stream()
-                    .filter(item -> matches(item, "status", status))
-                    .filter(item -> matches(item, "channel", channel))
-                    .filter(item -> matches(item, "provider", provider))
-                    .toList();
-        }
-
         @GetMapping("/deliveries/page")
         Object deliveriesPage(
                 @RequestParam(defaultValue = "0") int page,
                 @RequestParam(defaultValue = "50") int size,
                 @RequestParam(required = false) UUID notificationRequestId,
                 @RequestParam(required = false) String status,
-                @RequestParam(required = false) String channel,
-                @RequestParam(required = false) String provider) {
+                @RequestParam(required = false) String channel) {
             return downstreamRequest("notification-projection-service", () -> downstream.projection.get()
                     .uri(uri -> uri.path("/projections/deliveries")
                             .queryParam("page", page)
@@ -175,20 +121,9 @@ public class AdminBffServiceApplication {
                             .queryParamIfPresent("notificationId", java.util.Optional.ofNullable(notificationRequestId))
                             .queryParamIfPresent("status", java.util.Optional.ofNullable(status))
                             .queryParamIfPresent("channel", java.util.Optional.ofNullable(channel))
-                            .queryParamIfPresent("provider", java.util.Optional.ofNullable(provider))
                             .build())
                     .retrieve()
                     .body(Object.class));
-        }
-
-        @GetMapping("/outbox-events")
-        Object outboxEvents() {
-            return downstreamRequest("outbox-publisher-service", () -> downstream.outboxPublisher.get().uri("/outbox/events").retrieve().body(Object.class));
-        }
-
-        @PostMapping("/outbox-events/{id}/retry")
-        Object retryOutboxEvent(@PathVariable UUID id) {
-            return downstreamRequest("outbox-publisher-service", () -> downstream.outboxPublisher.post().uri("/outbox/events/{id}/retry", id).retrieve().body(Object.class));
         }
 
         @GetMapping("/templates")
@@ -301,82 +236,6 @@ public class AdminBffServiceApplication {
             return body.length() > 500 ? body.substring(0, 500) : body;
         }
 
-        private long countByStatus(List<Map<String, Object>> items, String status) {
-            return items.stream()
-                    .filter(item -> status.equals(String.valueOf(item.get("status"))))
-                    .count();
-        }
-
-        private long countByAnyStatus(List<Map<String, Object>> items, String... statuses) {
-            return items.stream()
-                    .filter(item -> {
-                        String itemStatus = String.valueOf(item.get("status"));
-                        for (String status : statuses) {
-                            if (status.equals(itemStatus)) {
-                                return true;
-                            }
-                        }
-                        return false;
-                    })
-                    .count();
-        }
-
-        private long countCreatedOnOrAfter(List<Map<String, Object>> items, Instant start) {
-            return items.stream()
-                    .filter(item -> {
-                        Instant createdAt = instantValue(item, "createdAt");
-                        return createdAt != null && !createdAt.isBefore(start);
-                    })
-                    .count();
-        }
-
-        private List<Map<String, Object>> outboxEventsAsDeliveries(UUID notificationId) {
-            Object[] events = downstreamRequest("outbox-publisher-service", () -> downstream.outboxPublisher.get().uri("/outbox/events").retrieve().body(Object[].class));
-            if (events == null) {
-                return List.of();
-            }
-            return List.of(events).stream()
-                    .filter(Map.class::isInstance)
-                    .map(Map.class::cast)
-                    .filter(event -> notificationId == null || notificationId.toString().equals(event.get("aggregateId")))
-                    .map(this::outboxEventAsDelivery)
-                    .toList();
-        }
-
-        private List<Map<String, Object>> projectionDeliveries() {
-            Object[] deliveries = downstreamRequest("notification-projection-service", () -> downstream.projection.get()
-                    .uri("/projections/deliveries").retrieve().body(Object[].class));
-            return objectList(deliveries);
-        }
-
-        private Map<String, Object> outboxEventAsDelivery(Map<?, ?> event) {
-            Object payloadValue = event.get("payload");
-            Map<?, ?> payload = payloadValue instanceof Map<?, ?> map ? map : Map.of();
-            String status = String.valueOf(event.get("status"));
-            Map<String, Object> delivery = new java.util.LinkedHashMap<>();
-            delivery.put("id", String.valueOf(event.get("eventId")));
-            delivery.put("notificationRequestId", String.valueOf(event.get("aggregateId")));
-            delivery.put("templateId", "");
-            delivery.put("channel", String.valueOf(valueOrDefault(payload, "channel", "EMAIL")));
-            delivery.put("status", deliveryStatus(status));
-            delivery.put("provider", "outbox");
-            delivery.put("destination", String.valueOf(valueOrDefault(payload, "destination", "")));
-            delivery.put("attemptCount", valueOrDefault(event, "attemptCount", 0));
-            delivery.put("maxAttempts", valueOrDefault(event, "maxAttempts", 0));
-            delivery.put("nextAttemptAt", event.get("nextAttemptAt"));
-            delivery.put("lastErrorMessage", event.get("lastError"));
-            delivery.put("createdAt", event.get("createdAt"));
-            return delivery;
-        }
-
-        private String deliveryStatus(String outboxStatus) {
-            return switch (outboxStatus) {
-                case "PUBLISHED" -> "SENT";
-                case "DEAD_LETTER" -> "DEAD_LETTERED";
-                default -> outboxStatus;
-            };
-        }
-
         private List<Map<String, Object>> objectList(Object value) {
             if (value == null) {
                 return List.of();
@@ -408,45 +267,6 @@ public class AdminBffServiceApplication {
             return actual != null && expected.equalsIgnoreCase(String.valueOf(actual));
         }
 
-        private boolean createdOnOrAfter(Map<String, Object> item, String date) {
-            if (date == null || date.isBlank()) {
-                return true;
-            }
-            return itemDate(item).compareTo(date) >= 0;
-        }
-
-        private boolean createdOnOrBefore(Map<String, Object> item, String date) {
-            if (date == null || date.isBlank()) {
-                return true;
-            }
-            return itemDate(item).compareTo(date) <= 0;
-        }
-
-        private String itemDate(Map<String, Object> item) {
-            Object createdAt = item.get("createdAt");
-            String value = createdAt == null ? "" : String.valueOf(createdAt);
-            return value.length() >= 10 ? value.substring(0, 10) : value;
-        }
-
-        private Instant instantValue(Map<String, Object> item, String key) {
-            Object value = item.get(key);
-            if (value instanceof Instant instant) {
-                return instant;
-            }
-            if (value == null) {
-                return null;
-            }
-            try {
-                return Instant.parse(String.valueOf(value));
-            } catch (RuntimeException exception) {
-                return null;
-            }
-        }
-
-        private Object valueOrDefault(Map<?, ?> source, String key, Object fallback) {
-            Object value = source.get(key);
-            return value == null ? fallback : value;
-        }
     }
 
     @org.springframework.stereotype.Component
@@ -455,7 +275,6 @@ public class AdminBffServiceApplication {
         final RestClient projection;
         final RestClient template;
         final RestClient preference;
-        final RestClient outboxPublisher;
         final RestClient email;
         final RestClient sms;
         final RestClient push;
@@ -468,7 +287,6 @@ public class AdminBffServiceApplication {
                 @Value("${NOTIFICATION_PROJECTION_URL:http://localhost:8092}") String projectionUrl,
                 @Value("${TEMPLATE_SERVICE_URL:http://localhost:8082}") String templateUrl,
                 @Value("${PREFERENCE_SERVICE_URL:http://localhost:8083}") String preferenceUrl,
-                @Value("${OUTBOX_PUBLISHER_SERVICE_URL:http://localhost:8084}") String outboxUrl,
                 @Value("${EMAIL_WORKER_SERVICE_URL:http://localhost:8085}") String emailUrl,
                 @Value("${SMS_WORKER_SERVICE_URL:http://localhost:8086}") String smsUrl,
                 @Value("${PUSH_WORKER_SERVICE_URL:http://localhost:8087}") String pushUrl,
@@ -478,7 +296,6 @@ public class AdminBffServiceApplication {
             this.projection = builder.clone().baseUrl(projectionUrl).build();
             this.template = builder.clone().baseUrl(templateUrl).build();
             this.preference = builder.clone().baseUrl(preferenceUrl).build();
-            this.outboxPublisher = builder.clone().baseUrl(outboxUrl).build();
             this.email = builder.clone().baseUrl(emailUrl).build();
             this.sms = builder.clone().baseUrl(smsUrl).build();
             this.push = builder.clone().baseUrl(pushUrl).build();
@@ -492,23 +309,17 @@ public class AdminBffServiceApplication {
 
     record DashboardStats(
             long totalNotificationsToday,
-            long sentCount,
+            long deliveredCount,
             long failedCount,
-            long pendingOutboxCount,
-            long retryCount,
-            long dlqCount,
-            double providerErrorRate,
-            double throughputPerMinute) {
+            long retryAttemptCount,
+            double providerErrorRate) {
     }
 
     record NotificationStats(
             long totalNotificationsToday,
-            long sentCount,
+            long deliveredCount,
             long failedCount,
-            long pendingOutboxCount,
-            long retryCount,
-            long dlqCount,
-            double providerErrorRate,
-            double throughputPerMinute) {
+            long retryAttemptCount,
+            double providerErrorRate) {
     }
 }

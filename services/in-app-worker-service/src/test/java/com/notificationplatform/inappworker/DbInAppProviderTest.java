@@ -33,24 +33,21 @@ class DbInAppProviderTest {
     }
 
     @Test
-    void consumerRecordsMetricsAndClearsCorrelationContext() {
+    void processorRecordsMetricsAndClearsLoggingContext() {
         InAppWorkerServiceApplication.DbInAppProvider provider =
                 new InAppWorkerServiceApplication.DbInAppProvider(0.0, 0);
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
-        InAppWorkerServiceApplication.InAppDeliveryConsumer consumer =
-                new InAppWorkerServiceApplication.InAppDeliveryConsumer(provider, registry);
+        InAppWorkerServiceApplication.InAppDeliveryProcessor processor =
+                new InAppWorkerServiceApplication.InAppDeliveryProcessor(provider, registry);
         InAppWorkerServiceApplication.DeliveryJob job = new InAppWorkerServiceApplication.DeliveryJob(
                 UUID.randomUUID(),
                 UUID.randomUUID(),
                 UUID.randomUUID(),
-                "IN_APP",
                 "user-1",
                 "title",
-                "body",
-                "NORMAL",
-                "corr-from-job");
+                "body");
 
-        consumer.consume(job, "corr-from-header");
+        processor.process(job);
 
         assertThat(registry.counter("worker_messages_consumed_total", "service", "in-app-worker-service", "channel", "IN_APP").count())
                 .isEqualTo(1.0);

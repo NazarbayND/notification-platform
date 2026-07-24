@@ -1,11 +1,10 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { request } from "./http";
 import type { Channel, Delivery, DeliveryStatus, PageResult } from "../types/api";
 
 export interface DeliveryFilters {
   status?: DeliveryStatus | "";
   channel?: Channel | "";
-  provider?: string;
   notificationRequestId?: string;
 }
 
@@ -26,10 +25,6 @@ export function useDeliveries(filters: DeliveryFilters, page = 1, pageSize = 10)
       if (filters.channel) {
         params.set("channel", filters.channel);
       }
-      if (filters.provider?.trim()) {
-        params.set("provider", filters.provider.trim());
-      }
-
       if (filters.notificationRequestId) {
         params.set("notificationRequestId", filters.notificationRequestId);
       }
@@ -37,16 +32,5 @@ export function useDeliveries(filters: DeliveryFilters, page = 1, pageSize = 10)
       const query = params.toString();
       return request<PageResult<Delivery>>(`/admin/deliveries/page?${query}`);
     }
-  });
-}
-
-export function useRetryDelivery() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (deliveryId: string) => {
-      await request(`/admin/outbox-events/${deliveryId}/retry`, { method: "POST" });
-    },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["deliveries"] })
   });
 }

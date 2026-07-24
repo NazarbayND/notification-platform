@@ -1,13 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { request } from "./http";
-import type { Channel, NotificationPriority, NotificationRequest, NotificationRequestStatus, PageResult } from "../types/api";
+import type { Channel, NotificationRequest, NotificationRequestStatus, PageResult } from "../types/api";
 
 export interface NotificationFilters {
   productId?: string;
   status?: NotificationRequestStatus | "";
-  priority?: NotificationPriority | "";
-  dateFrom?: string;
-  dateTo?: string;
+  channel?: Channel | "";
 }
 
 export const notificationKeys = {
@@ -18,14 +16,11 @@ export const notificationKeys = {
 export interface SendNotificationPayload {
   productId: string;
   templateKey: string;
-  requestedChannels: Channel[];
-  externalUserId: string;
+  channel: Channel;
+  userId: string;
   idempotencyKey: string;
-  category: string;
-  priority: NotificationPriority;
-  payload: Record<string, unknown>;
-  recipient: Record<string, unknown>;
-  expiresAt: string | null;
+  variables: Record<string, unknown>;
+  destination: string;
 }
 
 export function useNotifications(filters: NotificationFilters, page = 1, pageSize = 10) {
@@ -41,14 +36,8 @@ export function useNotifications(filters: NotificationFilters, page = 1, pageSiz
       if (filters.productId?.trim()) {
         params.set("productId", filters.productId.trim());
       }
-      if (filters.priority) {
-        params.set("priority", filters.priority);
-      }
-      if (filters.dateFrom) {
-        params.set("dateFrom", filters.dateFrom);
-      }
-      if (filters.dateTo) {
-        params.set("dateTo", filters.dateTo);
+      if (filters.channel) {
+        params.set("channel", filters.channel);
       }
 
       const query = params.toString();
@@ -74,41 +63,36 @@ export function useSendNotification() {
 
   return useMutation({
     mutationFn: async (payload: SendNotificationPayload) => {
-      const channel = payload.requestedChannels[0] ?? "EMAIL";
       const accepted = await request<{
         notificationId: string;
+        requestId: string;
         status: NotificationRequestStatus;
+        acceptedAt: string;
         correlationId: string;
         channel: Channel;
-        outboxEventId: string | null;
       }>("/admin/notifications", {
         method: "POST",
         body: JSON.stringify({
           productId: payload.productId,
-          userId: payload.externalUserId,
-          channel,
+          userId: payload.userId,
+          channel: payload.channel,
           templateKey: payload.templateKey,
-          destination: destinationFor(channel, payload.recipient),
-          priority: payload.priority,
+          destination: payload.destination,
           idempotencyKey: payload.idempotencyKey,
-          variables: payload.payload
+          variables: payload.variables
         })
       });
       return {
         id: accepted.notificationId,
         productId: payload.productId,
-        batchId: null,
         templateKey: payload.templateKey,
-        externalUserId: payload.externalUserId,
-        idempotencyKey: payload.idempotencyKey,
-        category: payload.category,
-        priority: payload.priority,
-        requestedChannels: [accepted.channel],
+        userId: payload.userId,
+        channel: accepted.channel,
         status: accepted.status,
-        payload: payload.payload,
-        recipient: payload.recipient,
-        expiresAt: payload.expiresAt,
-        createdAt: new Date().toISOString()
+        reasonCode: null,
+        reasonMessage: null,
+        requestedAt: accepted.acceptedAt,
+        updatedAt: accepted.acceptedAt
       };
     },
     onSuccess: (notification) => {
@@ -124,42 +108,24 @@ interface MicroserviceNotification {
   userId: string;
   channel: Channel;
   templateKey: string;
-  priority: NotificationPriority;
   status: NotificationRequestStatus;
-  idempotencyKey: string;
-  destination: string;
-  variables: Record<string, unknown>;
-  createdAt: string | null;
+  reasonCode: string | null;
+  reasonMessage: string | null;
+  requestedAt: string | null;
+  updatedAt: string | null;
 }
 
 function toNotificationRequest(notification: MicroserviceNotification): NotificationRequest {
   return {
     id: notification.id,
     productId: notification.productId,
-    batchId: null,
     templateKey: notification.templateKey,
-    externalUserId: notification.userId,
-    idempotencyKey: notification.idempotencyKey,
-    category: "default",
-    priority: notification.priority,
-    requestedChannels: [notification.channel],
+    userId: notification.userId,
+    channel: notification.channel,
     status: notification.status,
-    payload: notification.variables ?? {},
-    recipient: { destination: notification.destination },
-    expiresAt: null,
-    createdAt: notification.createdAt
+    reasonCode: notification.reasonCode,
+    reasonMessage: notification.reasonMessage,
+    requestedAt: notification.requestedAt,
+    updatedAt: notification.updatedAt
   };
-}
-
-function destinationFor(channel: Channel, recipient: Record<string, unknown>) {
-  if (channel === "EMAIL") {
-    return String(recipient.email ?? "");
-  }
-  if (channel === "SMS") {
-    return String(recipient.phone ?? recipient.destination ?? "");
-  }
-  if (channel === "PUSH") {
-    return String(recipient.token ?? recipient.destination ?? "");
-  }
-  return String(recipient.userId ?? recipient.destination ?? "");
 }

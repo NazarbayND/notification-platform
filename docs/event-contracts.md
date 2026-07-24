@@ -2,7 +2,7 @@
 
 Versioned JSON DTOs live in `services/shared-event-contracts`. Persistence entities are not shared.
 
-Phase 2 provides:
+The contracts module provides:
 
 - `NotificationRequested`
 - `DeliveryRequested`
@@ -26,4 +26,4 @@ Compatibility rules:
 
 ## Test result
 
-`EventContractSerializationTest` passed all 3 tests on 2026-07-10 for the Phase 3 contract. It now also asserts `productId`; the Phase 4–10 changes have not been run yet.
+`EventContractSerializationTest` covers the v1 field names, `productId`, and JSON round-trip compatibility. See the repository cleanup report or current CI run for the latest execution result.

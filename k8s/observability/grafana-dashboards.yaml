@@ -26,36 +26,16 @@ data:
       "panels": [
         { "type": "timeseries", "title": "Requests per second", "gridPos": { "x": 0, "y": 0, "w": 8, "h": 7 }, "targets": [{ "expr": "sum(rate(http_server_requests_seconds_count[1m])) by (service)", "legendFormat": "{{service}}" }] },
         { "type": "timeseries", "title": "Average API latency", "gridPos": { "x": 8, "y": 0, "w": 8, "h": 7 }, "targets": [{ "expr": "sum by (service) (rate(http_server_requests_seconds_sum[5m])) / clamp_min(sum by (service) (rate(http_server_requests_seconds_count[5m])), 0.001)", "legendFormat": "{{service}}" }] },
-        { "type": "timeseries", "title": "Notifications created by channel", "gridPos": { "x": 16, "y": 0, "w": 8, "h": 7 }, "targets": [{ "expr": "sum(rate(notification_created_total[1m])) by (channel)", "legendFormat": "{{channel}}" }] },
+        { "type": "timeseries", "title": "Accepted notification requests", "gridPos": { "x": 16, "y": 0, "w": 8, "h": 7 }, "targets": [{ "expr": "sum(rate(notification_intake_accepted_total[1m]))" }] },
         { "type": "stat", "title": "Sent vs failed notifications", "gridPos": { "x": 0, "y": 7, "w": 6, "h": 5 }, "targets": [{ "expr": "sum(delivery_attempt_total{status=\"SENT\"})", "legendFormat": "sent" }, { "expr": "sum(delivery_attempt_total{status=\"FAILED\"})", "legendFormat": "failed" }] },
-        { "type": "stat", "title": "Pending outbox events", "gridPos": { "x": 6, "y": 7, "w": 6, "h": 5 }, "targets": [{ "expr": "outbox_pending_total" }] },
-        { "type": "timeseries", "title": "Outbox publish rate", "gridPos": { "x": 12, "y": 7, "w": 6, "h": 5 }, "targets": [{ "expr": "rate(outbox_published_total[1m])" }] },
+        { "type": "stat", "title": "Orchestrator outbox failures", "gridPos": { "x": 6, "y": 7, "w": 6, "h": 5 }, "targets": [{ "expr": "sum(orchestrator_outbox_failures_total)" }] },
+        { "type": "timeseries", "title": "Orchestrator publish rate", "gridPos": { "x": 12, "y": 7, "w": 6, "h": 5 }, "targets": [{ "expr": "sum(rate(orchestrator_outbox_published_total[1m])) by (target)", "legendFormat": "{{target}}" }] },
         { "type": "timeseries", "title": "Worker processing rate", "gridPos": { "x": 18, "y": 7, "w": 6, "h": 5 }, "targets": [{ "expr": "sum(rate(worker_messages_processed_total[1m])) by (service, channel)", "legendFormat": "{{service}} {{channel}}" }] },
         { "type": "timeseries", "title": "Worker error rate", "gridPos": { "x": 0, "y": 12, "w": 8, "h": 6 }, "targets": [{ "expr": "sum(rate(worker_messages_failed_total[5m])) by (service, channel)", "legendFormat": "{{service}} {{channel}}" }] },
         { "type": "timeseries", "title": "Provider average latency", "gridPos": { "x": 8, "y": 12, "w": 8, "h": 6 }, "targets": [{ "expr": "sum by (channel, provider) (rate(provider_request_duration_seconds_sum[5m])) / clamp_min(sum by (channel, provider) (rate(provider_request_duration_seconds_count[5m])), 0.001)", "legendFormat": "{{channel}} {{provider}}" }] },
         { "type": "timeseries", "title": "Provider error rate", "gridPos": { "x": 16, "y": 12, "w": 8, "h": 6 }, "targets": [{ "expr": "sum(rate(provider_error_total[5m])) by (channel, provider, errorCode, error_code)", "legendFormat": "{{channel}} {{provider}} {{errorCode}}{{error_code}}" }] },
         { "type": "stat", "title": "Duplicate events skipped", "gridPos": { "x": 0, "y": 18, "w": 8, "h": 5 }, "targets": [{ "expr": "sum(worker_duplicate_events_skipped_total)" }] },
-        { "type": "stat", "title": "DLQ count", "gridPos": { "x": 8, "y": 18, "w": 8, "h": 5 }, "targets": [{ "expr": "outbox_dead_letter_total" }] }
-      ]
-    }
-  outbox-dashboard.json: |
-    {
-      "uid": "notification-platform-outbox",
-      "title": "Outbox Dashboard",
-      "schemaVersion": 39,
-      "version": 1,
-      "refresh": "10s",
-      "time": { "from": "now-1h", "to": "now" },
-      "panels": [
-        { "type": "stat", "title": "Pending events", "gridPos": { "x": 0, "y": 0, "w": 6, "h": 5 }, "targets": [{ "expr": "outbox_pending_total" }] },
-        { "type": "stat", "title": "Processing events", "gridPos": { "x": 6, "y": 0, "w": 6, "h": 5 }, "targets": [{ "expr": "outbox_processing_total" }] },
-        { "type": "timeseries", "title": "Published events/sec", "gridPos": { "x": 12, "y": 0, "w": 6, "h": 5 }, "targets": [{ "expr": "rate(outbox_published_total[1m])" }] },
-        { "type": "timeseries", "title": "Failed events/sec", "gridPos": { "x": 18, "y": 0, "w": 6, "h": 5 }, "targets": [{ "expr": "rate(outbox_failed_total[1m])" }] },
-        { "type": "stat", "title": "Dead-letter count", "gridPos": { "x": 0, "y": 5, "w": 6, "h": 5 }, "targets": [{ "expr": "outbox_dead_letter_total" }] },
-        { "type": "timeseries", "title": "Retry scheduled count", "gridPos": { "x": 6, "y": 5, "w": 6, "h": 5 }, "targets": [{ "expr": "increase(outbox_retry_scheduled_total[15m])" }] },
-        { "type": "timeseries", "title": "Batch size", "gridPos": { "x": 12, "y": 5, "w": 6, "h": 5 }, "targets": [{ "expr": "outbox_publish_batch_size" }] },
-        { "type": "timeseries", "title": "Average publish duration", "gridPos": { "x": 18, "y": 5, "w": 6, "h": 5 }, "targets": [{ "expr": "sum(rate(outbox_publish_duration_seconds_sum[5m])) / clamp_min(sum(rate(outbox_publish_duration_seconds_count[5m])), 0.001)" }] },
-        { "type": "stat", "title": "Oldest pending event age", "gridPos": { "x": 0, "y": 10, "w": 8, "h": 5 }, "targets": [{ "expr": "outbox_oldest_pending_age_seconds" }] }
+        { "type": "stat", "title": "Worker DLQ count", "gridPos": { "x": 8, "y": 18, "w": 8, "h": 5 }, "targets": [{ "expr": "sum(worker_dlq_total)" }] }
       ]
     }
   worker-dashboard.json: |
